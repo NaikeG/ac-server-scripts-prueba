@@ -269,7 +269,6 @@ function script.drawUI() -- Panel tipo gantry F1
             if isOn and not prevLightState[i] and beepSound then
                 local ok, err = pcall(function()
                     beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
-                    beepSound:stop()
                     beepSound:play()
                 end)
                 if not ok then
@@ -285,7 +284,6 @@ function script.drawUI() -- Panel tipo gantry F1
         if not greenSoundPlayed and goSound then
             local ok, err = pcall(function()
                 goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
-                goSound:stop()
                 goSound:play()
             end)
             if not ok then
@@ -349,3 +347,4 @@ function script.drawUI() -- Panel tipo gantry F1
         end
     end
 end
+
