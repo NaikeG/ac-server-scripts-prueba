@@ -48,7 +48,7 @@ local lightCenter = vec2((lightWidth / 2), (lightHeight / 2))
 local lightArrayStart = ((windowWidth / 2) - (lightWidth * 2) - lightWidth / 2)
 local lightState = {}
 for i = 1, lightCount, 1 do
-    lightState[i] = rgbm.colors.gray
+    lightState[i] = false
 end
 
 
@@ -220,33 +220,60 @@ ac.onResolutionChange(function()
     
 end)
 ac.log(ac.getUI().uiScale)
-function script.drawUI() --Draws a shitty UI for it.
+function script.drawUI() -- Panel tipo gantry F1
     --ac.debug("path", texFilePath .. "texture_trafficlight_off.png")
     --ac.debug("size", "x:" .. windowWidth .. " y:" .. windowHeight)
     --ac.debug("a", sim.currentSessionTime)
     --ac.debug("b", startTime-delayTime-seqStartTime)
 
+    local phase
     if sim.currentSessionTime < startTime + delayTime then
-        -- Secuencia de encendido progresivo en rojo (igual que antes)
+        -- Secuencia de encendido progresivo en rojo
+        phase = "red"
         for i = 1, lightCount, 1 do
-            if sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i then
-                lightState[i] = neonRed
-            else
-                lightState[i] = rgbm.colors.gray
-            end
+            lightState[i] = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i
         end
     elseif sim.currentSessionTime < startTime + delayTime + greenHoldTime then
-        -- NUEVO: al llegar el momento de largada, todas las luces se ponen verdes un instante
+        -- Flash verde al momento de largar
+        phase = "green"
         for i = 1, lightCount, 1 do
-            lightState[i] = neonGreen
+            lightState[i] = true
         end
     else
-        -- Pasado el tiempo de verde, no se dibuja nada (apagado)
         return
     end
 
+    local litColor = (phase == "red") and neonRed or neonGreen
+    local radius = lightWidth * 0.42
+    local padding = 22
+
+    local panelX1 = lightArrayStart - lightCenter.x - padding
+    local panelY1 = 256 - lightCenter.y - padding
+    local panelX2 = lightArrayStart + lightWidth * (lightCount - 1) + lightCenter.x + padding
+    local panelY2 = 256 + lightCenter.y + padding
+
+    -- Carcasa del semáforo
+    ui.drawRectFilled(vec2(panelX1, panelY1), vec2(panelX2, panelY2), rgbm(0.03, 0.03, 0.03, 0.92), 14)
+    ui.drawRect(vec2(panelX1, panelY1), vec2(panelX2, panelY2), rgbm(0.16, 0.16, 0.16, 1), 14, 0, 2)
+    ui.drawLine(vec2(panelX1 + 10, panelY2 - 6), vec2(panelX2 - 10, panelY2 - 6), rgbm(0, 0, 0, 0.5), 2)
+
     for i = 1, lightCount, 1 do
-        ui.drawImage(light, vec2(lightArrayStart + lightWidth * (i - 1), 256) - lightCenter,
-            vec2(lightArrayStart + lightWidth * (i - 1), 256) + lightCenter, lightState[i], ui.ImageFit.Stretch)
+        local center = vec2(lightArrayStart + lightWidth * (i - 1), 256)
+
+        -- Portalámpara (bezel oscuro)
+        ui.drawCircleFilled(center, radius + 7, rgbm(0.10, 0.10, 0.10, 1), 32)
+        ui.drawCircle(center, radius + 7, rgbm(0.22, 0.22, 0.22, 1), 32, 1.5)
+
+        if lightState[i] then
+            -- Resplandor en capas (glow)
+            ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, 0.12), 32)
+            ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, 0.28), 32)
+            -- Núcleo brillante
+            ui.drawCircleFilled(center, radius, litColor, 32)
+            ui.drawCircle(center, radius, rgbm(1, 1, 1, 0.35), 32, 1)
+        else
+            -- Lámpara apagada
+            ui.drawCircleFilled(center, radius, rgbm(0.16, 0.02, 0.02, 1), 32)
+        end
     end
 end
