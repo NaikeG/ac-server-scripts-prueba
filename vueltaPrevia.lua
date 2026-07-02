@@ -96,11 +96,11 @@ function script.drawUI()
     ------------------------------------------------
     -- Título
     ------------------------------------------------
-    ui.pushFont(ui.Font.Huge)
+    ui.pushFont(ui.Font.Title)
     local titleSize = ui.measureText(title)
     ui.setCursor(vec2(
         x + (panelWidth - titleSize.x) * 0.5,
-        y + 55
+        y + 45
     ))
     ui.pushStyleColor(ui.StyleColor.Text,
         alphaColor(1.0, 0.82, 0.0))
@@ -115,7 +115,7 @@ function script.drawUI()
     local subSize = ui.measureText(subtitle)
     ui.setCursor(vec2(
         x + (panelWidth - subSize.x) * 0.5,
-        y + 145
+        y + 130
     ))
     ui.pushStyleColor(ui.StyleColor.Text,
         alphaColor(1, 1, 1))
@@ -123,3 +123,4 @@ function script.drawUI()
     ui.popStyleColor()
     ui.popFont()
 end
+
