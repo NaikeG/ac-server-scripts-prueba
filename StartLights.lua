@@ -105,10 +105,22 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     beepURL = config:get("STARTLIGHTS", "SOUND_BEEP_URL", "")
     goURL = config:get("STARTLIGHTS", "SOUND_GO_URL", "")
     if beepURL ~= "" then
-        beepSound = ui.MediaPlayer(beepURL)
+        local ok, result = pcall(function() return ui.MediaPlayer(beepURL) end)
+        if ok then
+            beepSound = result
+            ac.log("[STARTLIGHTS] Beep sound cargado OK: " .. beepURL)
+        else
+            ac.log("[STARTLIGHTS] ERROR cargando beep sound (" .. beepURL .. "): " .. tostring(result))
+        end
     end
     if goURL ~= "" then
-        goSound = ui.MediaPlayer(goURL)
+        local ok, result = pcall(function() return ui.MediaPlayer(goURL) end)
+        if ok then
+            goSound = result
+            ac.log("[STARTLIGHTS] Go sound cargado OK: " .. goURL)
+        else
+            ac.log("[STARTLIGHTS] ERROR cargando go sound (" .. goURL .. "): " .. tostring(result))
+        end
     end
 
     overrideTimer = 1
@@ -255,9 +267,14 @@ function script.drawUI() -- Panel tipo gantry F1
         for i = 1, lightCount, 1 do
             local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i
             if isOn and not prevLightState[i] and beepSound then
-                beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
-                beepSound:stop()
-                beepSound:play()
+                local ok, err = pcall(function()
+                    beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+                    beepSound:stop()
+                    beepSound:play()
+                end)
+                if not ok then
+                    ac.log("[STARTLIGHTS] ERROR reproduciendo beep: " .. tostring(err))
+                end
             end
             prevLightState[i] = isOn
             lightState[i] = isOn
@@ -266,9 +283,14 @@ function script.drawUI() -- Panel tipo gantry F1
         -- Flash verde al momento de largar
         phase = "green"
         if not greenSoundPlayed and goSound then
-            goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
-            goSound:stop()
-            goSound:play()
+            local ok, err = pcall(function()
+                goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+                goSound:stop()
+                goSound:play()
+            end)
+            if not ok then
+                ac.log("[STARTLIGHTS] ERROR reproduciendo go sound: " .. tostring(err))
+            end
             greenSoundPlayed = true
         end
         for i = 1, lightCount, 1 do
@@ -279,8 +301,8 @@ function script.drawUI() -- Panel tipo gantry F1
     end
 
     local litColor = (phase == "red") and neonRed or neonGreen
-    local radius = lightWidth * 0.32
-    local vGap = radius * 2.3 -- separación vertical entre las 2 luces de cada columna
+    local radius = lightWidth * 0.42
+    local vGap = 0 -- 1 sola luz por columna (sin separación vertical)
     local padding = 22
 
     -- Parpadeo del verde
@@ -308,25 +330,22 @@ function script.drawUI() -- Panel tipo gantry F1
             isLit = isLit and blinkOn
         end
 
-        for row = 1, 2 do
-            local cy = 256 + ((row == 1) and -vGap / 2 or vGap / 2)
-            local center = vec2(cx, cy)
+        local center = vec2(cx, 256)
 
-            -- Portalámpara (bezel oscuro)
-            ui.drawCircleFilled(center, radius + 6, rgbm(0.10, 0.10, 0.10, 1), 32)
-            ui.drawCircle(center, radius + 6, rgbm(0.22, 0.22, 0.22, 1), 32, 1.5)
+        -- Portalámpara (bezel oscuro)
+        ui.drawCircleFilled(center, radius + 6, rgbm(0.10, 0.10, 0.10, 1), 32)
+        ui.drawCircle(center, radius + 6, rgbm(0.22, 0.22, 0.22, 1), 32, 1.5)
 
-            if isLit then
-                -- Resplandor en capas (glow)
-                ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, 0.12), 32)
-                ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, 0.28), 32)
-                -- Núcleo brillante
-                ui.drawCircleFilled(center, radius, litColor, 32)
-                ui.drawCircle(center, radius, rgbm(1, 1, 1, 0.35), 32, 1)
-            else
-                -- Lámpara apagada
-                ui.drawCircleFilled(center, radius, rgbm(0.16, 0.02, 0.02, 1), 32)
-            end
+        if isLit then
+            -- Resplandor en capas (glow)
+            ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, 0.12), 32)
+            ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, 0.28), 32)
+            -- Núcleo brillante
+            ui.drawCircleFilled(center, radius, litColor, 32)
+            ui.drawCircle(center, radius, rgbm(1, 1, 1, 0.35), 32, 1)
+        else
+            -- Lámpara apagada
+            ui.drawCircleFilled(center, radius, rgbm(0.16, 0.02, 0.02, 1), 32)
         end
     end
 end
