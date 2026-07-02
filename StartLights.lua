@@ -244,13 +244,22 @@ function script.drawUI() -- Panel tipo gantry F1
     end
 
     local litColor = (phase == "red") and neonRed or neonGreen
-    local radius = lightWidth * 0.42
+    local radius = lightWidth * 0.32
+    local vGap = radius * 2.3 -- separación vertical entre las 2 luces de cada columna
     local padding = 22
 
+    -- Parpadeo del verde
+    local blinkOn = true
+    if phase == "green" then
+        local blinkInterval = 180 -- ms por ciclo on/off
+        local elapsed = sim.currentSessionTime - (startTime + delayTime)
+        blinkOn = math.floor(elapsed / blinkInterval) % 2 == 0
+    end
+
     local panelX1 = lightArrayStart - lightCenter.x - padding
-    local panelY1 = 256 - lightCenter.y - padding
+    local panelY1 = 256 - vGap / 2 - radius - padding
     local panelX2 = lightArrayStart + lightWidth * (lightCount - 1) + lightCenter.x + padding
-    local panelY2 = 256 + lightCenter.y + padding
+    local panelY2 = 256 + vGap / 2 + radius + padding
 
     -- Carcasa del semáforo
     ui.drawRectFilled(vec2(panelX1, panelY1), vec2(panelX2, panelY2), rgbm(0.03, 0.03, 0.03, 0.92), 14)
@@ -258,22 +267,31 @@ function script.drawUI() -- Panel tipo gantry F1
     ui.drawLine(vec2(panelX1 + 10, panelY2 - 6), vec2(panelX2 - 10, panelY2 - 6), rgbm(0, 0, 0, 0.5), 2)
 
     for i = 1, lightCount, 1 do
-        local center = vec2(lightArrayStart + lightWidth * (i - 1), 256)
+        local cx = lightArrayStart + lightWidth * (i - 1)
+        local isLit = lightState[i]
+        if phase == "green" then
+            isLit = isLit and blinkOn
+        end
 
-        -- Portalámpara (bezel oscuro)
-        ui.drawCircleFilled(center, radius + 7, rgbm(0.10, 0.10, 0.10, 1), 32)
-        ui.drawCircle(center, radius + 7, rgbm(0.22, 0.22, 0.22, 1), 32, 1.5)
+        for row = 1, 2 do
+            local cy = 256 + ((row == 1) and -vGap / 2 or vGap / 2)
+            local center = vec2(cx, cy)
 
-        if lightState[i] then
-            -- Resplandor en capas (glow)
-            ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, 0.12), 32)
-            ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, 0.28), 32)
-            -- Núcleo brillante
-            ui.drawCircleFilled(center, radius, litColor, 32)
-            ui.drawCircle(center, radius, rgbm(1, 1, 1, 0.35), 32, 1)
-        else
-            -- Lámpara apagada
-            ui.drawCircleFilled(center, radius, rgbm(0.16, 0.02, 0.02, 1), 32)
+            -- Portalámpara (bezel oscuro)
+            ui.drawCircleFilled(center, radius + 6, rgbm(0.10, 0.10, 0.10, 1), 32)
+            ui.drawCircle(center, radius + 6, rgbm(0.22, 0.22, 0.22, 1), 32, 1.5)
+
+            if isLit then
+                -- Resplandor en capas (glow)
+                ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, 0.12), 32)
+                ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, 0.28), 32)
+                -- Núcleo brillante
+                ui.drawCircleFilled(center, radius, litColor, 32)
+                ui.drawCircle(center, radius, rgbm(1, 1, 1, 0.35), 32, 1)
+            else
+                -- Lámpara apagada
+                ui.drawCircleFilled(center, radius, rgbm(0.16, 0.02, 0.02, 1), 32)
+            end
         end
     end
 end
