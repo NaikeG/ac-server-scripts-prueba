@@ -24,6 +24,10 @@ local f1delay = 100
 
 local greenHoldTime = 1000 -- ms que se mantienen las luces en verde tras la largada, antes de apagarse
 
+-- Colores "flúor" (valores por encima de 1 generan un leve glow/bloom en CSP)
+local neonRed = rgbm(1.6, 0.05, 0.05, 1)
+local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
+
 local light = ui.ExtraCanvas(vec2(64, 64))
 --ac.debug("a", ui.imageSize(light))
 light:setName("light")
@@ -226,7 +230,7 @@ function script.drawUI() --Draws a shitty UI for it.
         -- Secuencia de encendido progresivo en rojo (igual que antes)
         for i = 1, lightCount, 1 do
             if sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i then
-                lightState[i] = rgbm.colors.red
+                lightState[i] = neonRed
             else
                 lightState[i] = rgbm.colors.gray
             end
@@ -234,7 +238,7 @@ function script.drawUI() --Draws a shitty UI for it.
     elseif sim.currentSessionTime < startTime + delayTime + greenHoldTime then
         -- NUEVO: al llegar el momento de largada, todas las luces se ponen verdes un instante
         for i = 1, lightCount, 1 do
-            lightState[i] = rgbm.colors.green
+            lightState[i] = neonGreen
         end
     else
         -- Pasado el tiempo de verde, no se dibuja nada (apagado)
