@@ -71,8 +71,8 @@ function script.drawUI()
     if state.alpha <= 0 then
         return
     end
-    local panelWidth = 700
-    local panelHeight = 170
+    local panelWidth = 820
+    local panelHeight = 210
     local x = (screen.w - panelWidth) * 0.5
     local y = 120
 
@@ -96,11 +96,11 @@ function script.drawUI()
     ------------------------------------------------
     -- Título
     ------------------------------------------------
-    ui.pushFont(ui.Font.Title)
+    ui.pushFont(ui.Font.Huge)
     local titleSize = ui.measureText(title)
     ui.setCursor(vec2(
         x + (panelWidth - titleSize.x) * 0.5,
-        y + 45
+        y + 55
     ))
     ui.pushStyleColor(ui.StyleColor.Text,
         alphaColor(1.0, 0.82, 0.0))
@@ -111,11 +111,11 @@ function script.drawUI()
     ------------------------------------------------
     -- Subtítulo
     ------------------------------------------------
-    ui.pushFont(ui.Font.Main)
+    ui.pushFont(ui.Font.Title)
     local subSize = ui.measureText(subtitle)
     ui.setCursor(vec2(
         x + (panelWidth - subSize.x) * 0.5,
-        y + 100
+        y + 145
     ))
     ui.pushStyleColor(ui.StyleColor.Text,
         alphaColor(1, 1, 1))
