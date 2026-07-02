@@ -35,6 +35,7 @@ local beepSound = nil
 local goSound = nil
 local prevLightState = {}
 local greenSoundPlayed = false
+local soundVolumeMultiplier = 2.5 -- sube el volumen del beep/go por encima del volumen general del juego
 
 local light = ui.ExtraCanvas(vec2(64, 64))
 --ac.debug("a", ui.imageSize(light))
@@ -104,6 +105,7 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
 
     beepURL = config:get("STARTLIGHTS", "SOUND_BEEP_URL", "")
     goURL = config:get("STARTLIGHTS", "SOUND_GO_URL", "")
+    soundVolumeMultiplier = config:get("STARTLIGHTS", "SOUND_VOLUME_MULTIPLIER", 2.5)
     if beepURL ~= "" then
         local ok, result = pcall(function() return ui.MediaPlayer(beepURL) end)
         if ok then
@@ -268,7 +270,7 @@ function script.drawUI() -- Panel tipo gantry F1
             local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i
             if isOn and not prevLightState[i] and beepSound then
                 local ok, err = pcall(function()
-                    beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+                    beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
                     beepSound:play()
                 end)
                 if not ok then
@@ -283,7 +285,7 @@ function script.drawUI() -- Panel tipo gantry F1
         phase = "green"
         if not greenSoundPlayed and goSound then
             local ok, err = pcall(function()
-                goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+                goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
                 goSound:play()
             end)
             if not ok then
