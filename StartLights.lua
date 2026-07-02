@@ -28,6 +28,14 @@ local greenHoldTime = 1000 -- ms que se mantienen las luces en verde tras la lar
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
 local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
 
+-- Sonidos
+local beepURL = ""
+local goURL = ""
+local beepSound = nil
+local goSound = nil
+local prevLightState = {}
+local greenSoundPlayed = false
+
 local light = ui.ExtraCanvas(vec2(64, 64))
 --ac.debug("a", ui.imageSize(light))
 light:setName("light")
@@ -49,6 +57,7 @@ local lightArrayStart = ((windowWidth / 2) - (lightWidth * 2) - lightWidth / 2)
 local lightState = {}
 for i = 1, lightCount, 1 do
     lightState[i] = false
+    prevLightState[i] = false
 end
 
 
@@ -92,6 +101,15 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     replaceACStart = config:get("STARTLIGHTS", "REPLACE_AC_START", 0)
     URL = config:get("STARTLIGHTS", "ICON_URL", "")
     debugMode = config:get("STARTLIGHTS", "DEBUG_MODE", 0)
+
+    beepURL = config:get("STARTLIGHTS", "SOUND_BEEP_URL", "")
+    goURL = config:get("STARTLIGHTS", "SOUND_GO_URL", "")
+    if beepURL ~= "" then
+        beepSound = ui.MediaPlayer(beepURL)
+    end
+    if goURL ~= "" then
+        goSound = ui.MediaPlayer(goURL)
+    end
 
     overrideTimer = 1
 
@@ -193,6 +211,10 @@ triggerStart = ac.OnlineEvent({
     startTime = message.startTime
     delayTime = message.delayTime
     started = false
+    greenSoundPlayed = false
+    for i = 1, lightCount, 1 do
+        prevLightState[i] = false
+    end
     ac.log("TIME: Start Light Trigger Received at " ..
         ac.lapTimeToString(sim.currentSessionTime, true) ..
         " | " .. ac.lapTimeToString(sim.sessionTimeLeft, true) .. " Remaining." ..
@@ -231,11 +253,24 @@ function script.drawUI() -- Panel tipo gantry F1
         -- Secuencia de encendido progresivo en rojo
         phase = "red"
         for i = 1, lightCount, 1 do
-            lightState[i] = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i
+            local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / 6) * i
+            if isOn and not prevLightState[i] and beepSound then
+                beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+                beepSound:stop()
+                beepSound:play()
+            end
+            prevLightState[i] = isOn
+            lightState[i] = isOn
         end
     elseif sim.currentSessionTime < startTime + delayTime + greenHoldTime then
         -- Flash verde al momento de largar
         phase = "green"
+        if not greenSoundPlayed and goSound then
+            goSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main))
+            goSound:stop()
+            goSound:play()
+            greenSoundPlayed = true
+        end
         for i = 1, lightCount, 1 do
             lightState[i] = true
         end
