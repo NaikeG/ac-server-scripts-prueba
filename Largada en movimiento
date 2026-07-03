@@ -25,6 +25,7 @@ local delayTime = 0
 local restrictorActive = false
 local restrictorTimer = 0
 local overSpeedFlag = false
+local greenCheckDone = false -- asegura que el chequeo de velocidad al dar el verde se haga una sola vez por secuencia
 
 -- Sonido
 local beepURL = ""
@@ -87,6 +88,7 @@ rollingStartEvent = ac.OnlineEvent({
         startTime = message.startTime
         delayTime = message.delayTime
         overSpeedFlag = false
+        greenCheckDone = false
         resetLightEdges()
     else
         phase = "off"
@@ -149,6 +151,7 @@ ac.onOnlineWelcome(function(message, config)
                 startTime = st
                 delayTime = dt
                 overSpeedFlag = false
+                greenCheckDone = false
                 resetLightEdges()
                 rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
             else
@@ -242,23 +245,20 @@ function script.update(dt)
 
     if phase == "sequence" then
         if sim.currentSessionTime < startTime + delayTime then
-            -- Fase roja: sin restricción de velocidad todavía
-            overSpeedFlag = false
+            -- Fase roja: sin control todavía
         else
-            -- Se dio el verde: a partir de acá se exige el límite y se aplica el Restrictor
-            if car.speedKmh > maxSpeed + speedMargin then
-                if not overSpeedFlag then
-                    overSpeedFlag = true
+            -- Se dio el verde: chequeo único de si se mantuvo el ritmo de 80 km/h
+            if not greenCheckDone then
+                greenCheckDone = true
+                if car.speedKmh > maxSpeed + speedMargin then
                     ac.sendChatMessage(
                         car:driverName() ..
-                        " superó los " .. maxSpeed .. " km/h en la largada. Restrictor aplicado."
+                        " superó los " .. maxSpeed .. " km/h al darse la largada. Restrictor aplicado."
                     )
                     applyRestrictor(restrictorValue)
                     restrictorActive = true
                     restrictorTimer = restrictorDuration
                 end
-            else
-                overSpeedFlag = false
             end
 
             if restrictorTimer > 0 then
@@ -422,4 +422,3 @@ function script.drawUI()
         drawGantry(centerX, gantryY)
     end
 end
-
