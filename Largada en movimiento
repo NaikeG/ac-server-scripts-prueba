@@ -72,6 +72,39 @@ ac.onOnlineWelcome(function(message, config)
     )
 end)
 
+local function applyRestrictor(value)
+    -- Prueba varias funciones candidatas de CSP, ya que la firma exacta
+    -- para scripts online (a diferencia de scripts de física de auto) no
+    -- está confirmada. Loguea cuál funciona para poder limpiar el código después.
+    local attempts = {
+        { name = "physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value)",
+          fn = function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end },
+        { name = "physics.setCarPenalty(ac.PenaltyType.Restrictor, value)",
+          fn = function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end },
+        { name = "ac.setCarRestrictor(0, value)",
+          fn = function() ac.setCarRestrictor(0, value) end },
+        { name = "physics.setExtraRestrictor(value)",
+          fn = function() physics.setExtraRestrictor(value) end },
+    }
+
+    for _, attempt in ipairs(attempts) do
+        local ok, err = pcall(attempt.fn)
+        if ok then
+            ac.log("[ROLLINGSTART] OK usando: " .. attempt.name)
+            return true
+        else
+            ac.log("[ROLLINGSTART] Falló " .. attempt.name .. ": " .. tostring(err))
+        end
+    end
+
+    ac.log("[ROLLINGSTART] Ninguna función de restrictor funcionó. Aplicando bloqueo de caja como alternativa.")
+    local ok, err = pcall(function() physics.lockUserGearboxFor(restrictorDuration, true) end)
+    if not ok then
+        ac.log("[ROLLINGSTART] ERROR con alternativa de caja: " .. tostring(err))
+    end
+    return false
+end
+
 function script.update(dt)
     -- Fade del panel
     local speed = 3.5
@@ -87,10 +120,7 @@ function script.update(dt)
         if restrictorTimer <= 0 then
             restrictorTimer = 0
             restrictorActive = false
-            local ok, err = pcall(function() physics.setRestrictor(0) end)
-            if not ok then
-                ac.log("[ROLLINGSTART] ERROR quitando restrictor: " .. tostring(err))
-            end
+            applyRestrictor(0)
         end
     end
 
@@ -110,15 +140,9 @@ function script.update(dt)
                     " superó los " .. maxSpeed .. " km/h en la largada en movimiento. Restrictor aplicado por " ..
                     restrictorDuration .. "s."
                 )
-                local ok, err = pcall(function()
-                    physics.setRestrictor(restrictorValue)
-                end)
-                if ok then
-                    restrictorActive = true
-                    restrictorTimer = restrictorDuration
-                else
-                    ac.log("[ROLLINGSTART] ERROR aplicando restrictor: " .. tostring(err))
-                end
+                applyRestrictor(restrictorValue)
+                restrictorActive = true
+                restrictorTimer = restrictorDuration
             end
         else
             overSpeedFlag = false
@@ -220,3 +244,4 @@ function script.drawUI()
         ui.popFont()
     end
 end
+
