@@ -418,8 +418,9 @@ function script.drawUI()
         drawInfoPanel(centerX, panelY)
         drawGantry(centerX, gantryY)
     else
-        -- Durante la secuencia (rojo -> verde): se oculta el cartel y aparece la señal de 80 al lado del semáforo
-        drawGantry(centerX, panelY)
+        -- Durante la secuencia (rojo -> verde): se oculta el cartel y aparece la señal de 80 al lado del semáforo,
+        -- que se queda en la misma posición que durante la fase amarilla.
+        drawGantry(centerX, gantryY)
 
         local radius = 26
         local spacing = radius * 2.4
@@ -429,7 +430,7 @@ function script.drawUI()
 
         local signSize = gantryHeight
         local signX = gantryX + gantryWidth + 20
-        local signY = panelY
+        local signY = gantryY
 
         drawSpeedSign(signX, signY, signSize)
     end
