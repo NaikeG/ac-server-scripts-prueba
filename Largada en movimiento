@@ -10,6 +10,7 @@ local state = {
 
 -- Config (se sobreescribe desde Extra Options, sección [ROLLINGSTART])
 local maxSpeed = 80          -- km/h límite durante la largada en movimiento
+local speedMargin = 3        -- km/h de tolerancia antes de penalizar (evita falsos positivos por el pit limiter, que oscila un poco alrededor del límite)
 local restrictorDuration = 3 -- segundos que dura la penalidad
 local restrictorValue = 1.0  -- 0 = sin restricción, 1 = restricción máxima
 
@@ -25,6 +26,23 @@ local screen = {
     w = sim.windowWidth,
     h = sim.windowHeight
 }
+
+-- Diagnóstico único: lista todos los tipos de penalidad reales disponibles en esta versión de CSP
+local penaltyTypesLogged = false
+local function logAvailablePenaltyTypes()
+    if penaltyTypesLogged then return end
+    penaltyTypesLogged = true
+    local ok, err = pcall(function()
+        local names = {}
+        for k, v in pairs(ac.PenaltyType) do
+            table.insert(names, tostring(k) .. "=" .. tostring(v))
+        end
+        ac.log("[ROLLINGSTART] ac.PenaltyType disponibles: " .. table.concat(names, ", "))
+    end)
+    if not ok then
+        ac.log("[ROLLINGSTART] No se pudo enumerar ac.PenaltyType: " .. tostring(err))
+    end
+end
 
 rollingStartEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Rolling Start"),
@@ -54,6 +72,7 @@ ac.onOnlineWelcome(function(message, config)
     end
 
     maxSpeed = config:get("ROLLINGSTART", "MAX_SPEED_KMH", 80)
+    speedMargin = config:get("ROLLINGSTART", "SPEED_MARGIN_KMH", 3)
     restrictorDuration = config:get("ROLLINGSTART", "RESTRICTOR_DURATION", 3)
     restrictorValue = config:get("ROLLINGSTART", "RESTRICTOR_VALUE", 1.0)
 
@@ -70,22 +89,42 @@ ac.onOnlineWelcome(function(message, config)
         end,
         adminFlag
     )
+
+    logAvailablePenaltyTypes()
 end)
 
 local function applyRestrictor(value)
-    -- Prueba varias funciones candidatas de CSP, ya que la firma exacta
-    -- para scripts online (a diferencia de scripts de física de auto) no
-    -- está confirmada. Loguea cuál funciona para poder limpiar el código después.
-    local attempts = {
-        { name = "physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value)",
-          fn = function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end },
-        { name = "physics.setCarPenalty(ac.PenaltyType.Restrictor, value)",
-          fn = function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end },
-        { name = "ac.setCarRestrictor(0, value)",
-          fn = function() ac.setCarRestrictor(0, value) end },
-        { name = "physics.setExtraRestrictor(value)",
-          fn = function() physics.setExtraRestrictor(value) end },
-    }
+    -- Prueba varias funciones candidatas de CSP. Antes de intentar cada una,
+    -- verifica que el valor de enum exista de verdad (si no, pcall "funciona"
+    -- en falso porque nil se traduce silenciosamente a 0 del lado de C++).
+    local attempts = {}
+
+    if ac.PenaltyType.Restrictor ~= nil then
+        table.insert(attempts, {
+            name = "physics.setCarPenalty(ac.PenaltyType.Restrictor, value)",
+            fn = function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end
+        })
+    else
+        ac.log("[ROLLINGSTART] ac.PenaltyType.Restrictor no existe, se salta.")
+    end
+
+    if ac.PenaltyType.EngineRestrictor ~= nil then
+        table.insert(attempts, {
+            name = "physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value)",
+            fn = function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end
+        })
+    else
+        ac.log("[ROLLINGSTART] ac.PenaltyType.EngineRestrictor no existe, se salta.")
+    end
+
+    table.insert(attempts, {
+        name = "ac.setCarRestrictor(0, value)",
+        fn = function() ac.setCarRestrictor(0, value) end
+    })
+    table.insert(attempts, {
+        name = "physics.setExtraRestrictor(value)",
+        fn = function() physics.setExtraRestrictor(value) end
+    })
 
     for _, attempt in ipairs(attempts) do
         local ok, err = pcall(attempt.fn)
@@ -131,7 +170,7 @@ function script.update(dt)
 
     -- Control de velocidad
     if state.enabled then
-        if car.speedKmh > maxSpeed then
+        if car.speedKmh > maxSpeed + speedMargin then
             if not overSpeedFlag then
                 overSpeedFlag = true
                 warningFlash = 1.5
@@ -214,7 +253,7 @@ function script.drawUI()
         y + 82
     ))
     local speedColor
-    if car.speedKmh > maxSpeed then
+    if car.speedKmh > maxSpeed + speedMargin then
         speedColor = alphaColor(1.0, 0.2, 0.15)
     else
         speedColor = alphaColor(1, 1, 1)
@@ -244,4 +283,3 @@ function script.drawUI()
         ui.popFont()
     end
 end
-
