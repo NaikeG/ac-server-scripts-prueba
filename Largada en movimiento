@@ -30,6 +30,7 @@ local overSpeedFlag = false
 local beepURL = ""
 local beepSound = nil
 local soundVolumeMultiplier = 2.5
+local speedSignURL = ""
 
 local title = "LARGADA EN MOVIMIENTO"
 
@@ -118,6 +119,7 @@ ac.onOnlineWelcome(function(message, config)
     lightsOutMin = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 3, 1) * 1000
     lightsOutMax = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 5, 2) * 1000
 
+    speedSignURL = config:get("ROLLINGSTART", "SPEED_SIGN_URL", "")
     beepURL = config:get("ROLLINGSTART", "SOUND_BEEP_URL", "")
     soundVolumeMultiplier = config:get("ROLLINGSTART", "SOUND_VOLUME_MULTIPLIER", 2.5)
     if beepURL ~= "" then
@@ -380,6 +382,28 @@ local function drawInfoPanel(centerX, y)
     end
 end
 
+local function drawSpeedSign(x, y, size)
+    local center = vec2(x + size * 0.5, y + size * 0.5)
+    local radius = size * 0.5
+
+    if speedSignURL ~= "" and ui.isImageReady(speedSignURL) then
+        ui.drawImage(speedSignURL, vec2(x, y), vec2(x + size, y + size), alphaColor(1, 1, 1, 1))
+        return
+    end
+
+    -- Respaldo vectorial mientras la imagen no está lista o no hay URL configurada
+    ui.drawCircleFilled(center, radius, alphaColor(1, 1, 1, 1), 48)
+    ui.drawCircleFilled(center, radius, alphaColor(0.85, 0.05, 0.05, 1), 48, 0, radius * 0.16)
+    ui.pushFont(ui.Font.Title)
+    local txt = "80"
+    local txtSize = ui.measureText(txt)
+    ui.setCursor(vec2(center.x - txtSize.x * 0.5, center.y - txtSize.y * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(0.05, 0.05, 0.05, 1))
+    ui.text(txt)
+    ui.popStyleColor()
+    ui.popFont()
+end
+
 function script.drawUI()
     if state.alpha <= 0 then
         return
@@ -390,6 +414,23 @@ function script.drawUI()
     local panelHeight = 110
     local gantryY = panelY + panelHeight + 20
 
-    drawInfoPanel(centerX, panelY)
-    drawGantry(centerX, gantryY)
+    if phase == "yellow" then
+        drawInfoPanel(centerX, panelY)
+        drawGantry(centerX, gantryY)
+    else
+        -- Durante la secuencia (rojo -> verde): se oculta el cartel y aparece la señal de 80 al lado del semáforo
+        drawGantry(centerX, panelY)
+
+        local radius = 26
+        local spacing = radius * 2.4
+        local gantryWidth = (lightCount - 1) * spacing + radius * 2 + 44
+        local gantryHeight = radius * 2 + 44
+        local gantryX = centerX - gantryWidth * 0.5
+
+        local signSize = gantryHeight
+        local signX = gantryX + gantryWidth + 20
+        local signY = panelY
+
+        drawSpeedSign(signX, signY, signSize)
+    end
 end
