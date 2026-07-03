@@ -1,0 +1,222 @@
+sim = ac.getSim()
+car = ac.getCar(0)
+
+local adminFlag = ui.OnlineExtraFlags.Admin
+
+local state = {
+    enabled = false,
+    alpha = 0
+}
+
+-- Config (se sobreescribe desde Extra Options, sección [ROLLINGSTART])
+local maxSpeed = 80          -- km/h límite durante la largada en movimiento
+local restrictorDuration = 3 -- segundos que dura la penalidad
+local restrictorValue = 1.0  -- 0 = sin restricción, 1 = restricción máxima
+
+-- Estado interno
+local restrictorActive = false
+local restrictorTimer = 0
+local overSpeedFlag = false -- evita re-aplicar la penalidad en cada frame mientras sigue arriba del límite
+local warningFlash = 0      -- para el aviso visual cuando se aplica la penalidad
+
+local title = "LARGADA EN MOVIMIENTO"
+
+local screen = {
+    w = sim.windowWidth,
+    h = sim.windowHeight
+}
+
+rollingStartEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Rolling Start"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    state.enabled = message.enabled
+    overSpeedFlag = false
+    ac.log(
+        "[ROLLINGSTART] " ..
+        sender:driverName() ..
+        " -> " ..
+        tostring(state.enabled)
+    )
+end,
+ac.SharedNamespace.ServerScript)
+
+ac.onResolutionChange(function()
+    screen.w = ac.getSim().windowWidth
+    screen.h = ac.getSim().windowHeight
+end)
+
+ac.onOnlineWelcome(function(message, config)
+    if config:get("ROLLINGSTART", "ADMIN_ONLY", 1) == 0 then
+        adminFlag = ui.OnlineExtraFlags.None
+    else
+        adminFlag = ui.OnlineExtraFlags.Admin
+    end
+
+    maxSpeed = config:get("ROLLINGSTART", "MAX_SPEED_KMH", 80)
+    restrictorDuration = config:get("ROLLINGSTART", "RESTRICTOR_DURATION", 3)
+    restrictorValue = config:get("ROLLINGSTART", "RESTRICTOR_VALUE", 1.0)
+
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🚦 Largada en Movimiento",
+        function() return true end,
+        nil,
+        function()
+            state.enabled = not state.enabled
+            overSpeedFlag = false
+            rollingStartEvent({ enabled = state.enabled })
+            ac.log("[ROLLINGSTART] Estado: " .. tostring(state.enabled))
+        end,
+        adminFlag
+    )
+end)
+
+function script.update(dt)
+    -- Fade del panel
+    local speed = 3.5
+    if state.enabled or restrictorActive then
+        state.alpha = math.min(state.alpha + dt * speed, 1)
+    else
+        state.alpha = math.max(state.alpha - dt * speed, 0)
+    end
+
+    -- Cuenta regresiva de la penalidad activa
+    if restrictorTimer > 0 then
+        restrictorTimer = restrictorTimer - dt
+        if restrictorTimer <= 0 then
+            restrictorTimer = 0
+            restrictorActive = false
+            local ok, err = pcall(function() physics.setRestrictor(0) end)
+            if not ok then
+                ac.log("[ROLLINGSTART] ERROR quitando restrictor: " .. tostring(err))
+            end
+        end
+    end
+
+    -- Flash de aviso
+    if warningFlash > 0 then
+        warningFlash = math.max(warningFlash - dt, 0)
+    end
+
+    -- Control de velocidad
+    if state.enabled then
+        if car.speedKmh > maxSpeed then
+            if not overSpeedFlag then
+                overSpeedFlag = true
+                warningFlash = 1.5
+                ac.sendChatMessage(
+                    car:driverName() ..
+                    " superó los " .. maxSpeed .. " km/h en la largada en movimiento. Restrictor aplicado por " ..
+                    restrictorDuration .. "s."
+                )
+                local ok, err = pcall(function()
+                    physics.setRestrictor(restrictorValue)
+                end)
+                if ok then
+                    restrictorActive = true
+                    restrictorTimer = restrictorDuration
+                else
+                    ac.log("[ROLLINGSTART] ERROR aplicando restrictor: " .. tostring(err))
+                end
+            end
+        else
+            overSpeedFlag = false
+        end
+    else
+        overSpeedFlag = false
+    end
+end
+
+local function alphaColor(r, g, b, mult)
+    return rgbm(r, g, b, state.alpha * (mult or 1))
+end
+
+function script.drawUI()
+    if state.alpha <= 0 then
+        return
+    end
+
+    local panelWidth = 620
+    local panelHeight = 150
+    local x = (screen.w - panelWidth) * 0.5
+    local y = 120
+
+    -- Fondo
+    ui.drawRectFilled(
+        vec2(x, y),
+        vec2(x + panelWidth, y + panelHeight),
+        alphaColor(0, 0, 0, 0.88),
+        10
+    )
+    -- Borde: rojo si hay penalidad activa, dorado si solo está el límite activo
+    local borderColor
+    if restrictorActive then
+        borderColor = alphaColor(1.0, 0.15, 0.1)
+    else
+        borderColor = alphaColor(1.0, 0.82, 0.0)
+    end
+    ui.drawRect(
+        vec2(x, y),
+        vec2(x + panelWidth, y + panelHeight),
+        borderColor,
+        10,
+        0,
+        3
+    )
+
+    ------------------------------------------------
+    -- Título
+    ------------------------------------------------
+    ui.pushFont(ui.Font.Title)
+    local titleSize = ui.measureText(title)
+    ui.setCursor(vec2(
+        x + (panelWidth - titleSize.x) * 0.5,
+        y + 30
+    ))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
+    ui.text(title)
+    ui.popStyleColor()
+    ui.popFont()
+
+    ------------------------------------------------
+    -- Límite de velocidad / velocidad actual
+    ------------------------------------------------
+    local subtitle = "MÁXIMO " .. maxSpeed .. " KM/H   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
+    ui.pushFont(ui.Font.Main)
+    local subSize = ui.measureText(subtitle)
+    ui.setCursor(vec2(
+        x + (panelWidth - subSize.x) * 0.5,
+        y + 82
+    ))
+    local speedColor
+    if car.speedKmh > maxSpeed then
+        speedColor = alphaColor(1.0, 0.2, 0.15)
+    else
+        speedColor = alphaColor(1, 1, 1)
+    end
+    ui.pushStyleColor(ui.StyleColor.Text, speedColor)
+    ui.text(subtitle)
+    ui.popStyleColor()
+    ui.popFont()
+
+    ------------------------------------------------
+    -- Aviso de penalidad
+    ------------------------------------------------
+    if restrictorActive then
+        local warnText = "¡RESTRICTOR ACTIVO! (" .. math.ceil(restrictorTimer) .. "s)"
+        ui.pushFont(ui.Font.Main)
+        local warnSize = ui.measureText(warnText)
+        ui.setCursor(vec2(
+            x + (panelWidth - warnSize.x) * 0.5,
+            y + 115
+        ))
+        -- Parpadeo simple mientras dure
+        local blink = (math.floor(sim.currentSessionTime / 200) % 2 == 0)
+        local warnAlphaMult = blink and 1 or 0.35
+        ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.15, 0.1, warnAlphaMult))
+        ui.text(warnText)
+        ui.popStyleColor()
+        ui.popFont()
+    end
+end
