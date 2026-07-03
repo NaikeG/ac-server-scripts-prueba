@@ -242,13 +242,16 @@ function script.update(dt)
 
     if phase == "sequence" then
         if sim.currentSessionTime < startTime + delayTime then
-            -- Fase roja: se exige respetar el límite de velocidad
+            -- Fase roja: sin restricción de velocidad todavía
+            overSpeedFlag = false
+        else
+            -- Se dio el verde: a partir de acá se exige el límite y se aplica el Restrictor
             if car.speedKmh > maxSpeed + speedMargin then
                 if not overSpeedFlag then
                     overSpeedFlag = true
                     ac.sendChatMessage(
                         car:driverName() ..
-                        " superó los " .. maxSpeed .. " km/h durante la largada en movimiento. Restrictor aplicado."
+                        " superó los " .. maxSpeed .. " km/h en la largada. Restrictor aplicado."
                     )
                     applyRestrictor(restrictorValue)
                     restrictorActive = true
@@ -266,18 +269,15 @@ function script.update(dt)
                     applyRestrictor(0)
                 end
             end
-        else
-            -- Se dio el verde: se saca el restrictor sí o sí
-            if restrictorActive or restrictorTimer > 0 then
-                restrictorActive = false
-                restrictorTimer = 0
-                applyRestrictor(0)
-            end
-            overSpeedFlag = false
 
             -- Tras el tiempo de flash verde, todo vuelve a apagarse solo
             if sim.currentSessionTime > startTime + delayTime + greenHoldTime * 1000 then
                 phase = "off"
+                if restrictorActive or restrictorTimer > 0 then
+                    restrictorActive = false
+                    restrictorTimer = 0
+                    applyRestrictor(0)
+                end
             end
         end
     end
@@ -422,3 +422,4 @@ function script.drawUI()
         drawGantry(centerX, gantryY)
     end
 end
+
