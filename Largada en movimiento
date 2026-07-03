@@ -3,65 +3,74 @@ car = ac.getCar(0)
 
 local adminFlag = ui.OnlineExtraFlags.Admin
 
-local state = {
-    enabled = false,
-    alpha = 0
-}
+-- Fases: "off" | "yellow" (safety car, vel. libre) | "sequence" (roja -> verde, con límite)
+local phase = "off"
+local state = { alpha = 0 }
 
 -- Config (se sobreescribe desde Extra Options, sección [ROLLINGSTART])
-local maxSpeed = 80          -- km/h límite durante la largada en movimiento
-local speedMargin = 3        -- km/h de tolerancia antes de penalizar (evita falsos positivos por el pit limiter, que oscila un poco alrededor del límite)
-local restrictorDuration = 3 -- segundos que dura la penalidad
-local restrictorValue = 1.0  -- 0 = sin restricción, 1 = restricción máxima
-local greenHoldTime = 1.5    -- segundos que se ve el flash verde al dar la largada
+local maxSpeed = 80
+local speedMargin = 3
+local restrictorDuration = 3
+local restrictorValue = 1.0
+local greenHoldTime = 1.5      -- segundos que dura el flash verde antes de apagarse
+local seqDuration = 17000      -- ms desde el click hasta que la última luz roja está encendida
+local seqStartTime = 12000     -- ms desde el click hasta que se enciende la 1ra luz roja
+local lightsOutMin, lightsOutMax = 3000, 5000 -- rango de espera aleatoria tras completar las rojas, antes del verde
 
--- Estado interno
+-- Estado interno de la secuencia (sincronizado por evento)
+local startTime = 0
+local delayTime = 0
+
+-- Estado interno del restrictor
 local restrictorActive = false
 local restrictorTimer = 0
-local overSpeedFlag = false -- evita re-aplicar la penalidad en cada frame mientras sigue arriba del límite
-local prevEnabled = false
-local greenFlashTimer = 0
+local overSpeedFlag = false
 
 local title = "LARGADA EN MOVIMIENTO"
 
 local lightCount = 6
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
 local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
+local neonYellow = rgbm(1.6, 1.1, 0.05, 1)
 
 local screen = {
     w = sim.windowWidth,
     h = sim.windowHeight
 }
 
--- Diagnóstico único: lista todos los tipos de penalidad reales disponibles en esta versión de CSP
+-- Diagnóstico: lista los ac.PenaltyType disponibles al conectar
 local penaltyTypesLogged = false
 local function logAvailablePenaltyTypes()
     if penaltyTypesLogged then return end
     penaltyTypesLogged = true
-    local ok, err = pcall(function()
+    pcall(function()
         local names = {}
         for k, v in pairs(ac.PenaltyType) do
             table.insert(names, tostring(k) .. "=" .. tostring(v))
         end
         ac.log("[ROLLINGSTART] ac.PenaltyType disponibles: " .. table.concat(names, ", "))
     end)
-    if not ok then
-        ac.log("[ROLLINGSTART] No se pudo enumerar ac.PenaltyType: " .. tostring(err))
-    end
 end
 
 rollingStartEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Rolling Start"),
-    enabled = ac.StructItem.boolean()
+    phase = ac.StructItem.float(),     -- 0 = off, 1 = yellow, 2 = sequence
+    startTime = ac.StructItem.float(),
+    delayTime = ac.StructItem.float()
 }, function(sender, message)
-    state.enabled = message.enabled
-    overSpeedFlag = false
-    ac.log(
-        "[ROLLINGSTART] " ..
-        sender:driverName() ..
-        " -> " ..
-        tostring(state.enabled)
-    )
+    if message.phase == 1 then
+        phase = "yellow"
+    elseif message.phase == 2 then
+        phase = "sequence"
+        startTime = message.startTime
+        delayTime = message.delayTime
+        overSpeedFlag = false
+    else
+        phase = "off"
+        restrictorActive = false
+        restrictorTimer = 0
+    end
+    ac.log("[ROLLINGSTART] " .. sender:driverName() .. " -> fase: " .. phase)
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -82,6 +91,10 @@ ac.onOnlineWelcome(function(message, config)
     restrictorDuration = config:get("ROLLINGSTART", "RESTRICTOR_DURATION", 3)
     restrictorValue = config:get("ROLLINGSTART", "RESTRICTOR_VALUE", 1.0)
     greenHoldTime = config:get("ROLLINGSTART", "GREEN_HOLD_TIME", 1.5)
+    seqDuration = config:get("ROLLINGSTART", "SEQUENCE_LENGTH", 17) * 1000
+    seqStartTime = config:get("ROLLINGSTART", "SEQUENCE_START", 12) * 1000
+    lightsOutMin = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 3, 1) * 1000
+    lightsOutMax = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 5, 2) * 1000
 
     ui.registerOnlineExtra(
         ui.Icons.Warning,
@@ -89,10 +102,25 @@ ac.onOnlineWelcome(function(message, config)
         function() return true end,
         nil,
         function()
-            state.enabled = not state.enabled
-            overSpeedFlag = false
-            rollingStartEvent({ enabled = state.enabled })
-            ac.log("[ROLLINGSTART] Estado: " .. tostring(state.enabled))
+            if phase == "off" then
+                phase = "yellow"
+                rollingStartEvent({ phase = 1, startTime = 0, delayTime = 0 })
+            elseif phase == "yellow" then
+                local st = sim.currentSessionTime + seqDuration
+                local dt = math.random(lightsOutMin, lightsOutMax)
+                phase = "sequence"
+                startTime = st
+                delayTime = dt
+                overSpeedFlag = false
+                rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
+            else
+                -- Ya en secuencia: cancelar y volver a apagado
+                phase = "off"
+                restrictorActive = false
+                restrictorTimer = 0
+                rollingStartEvent({ phase = 0, startTime = 0, delayTime = 0 })
+            end
+            ac.log("[ROLLINGSTART] Click admin -> fase: " .. phase)
         end,
         adminFlag
     )
@@ -101,97 +129,75 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 local function applyRestrictor(value)
-    -- Prueba varias funciones candidatas de CSP. Antes de intentar cada una,
-    -- verifica que el valor de enum exista de verdad (si no, pcall "funciona"
-    -- en falso porque nil se traduce silenciosamente a 0 del lado de C++).
     local attempts = {}
-
     if ac.PenaltyType.Restrictor ~= nil then
-        table.insert(attempts, {
-            name = "physics.setCarPenalty(ac.PenaltyType.Restrictor, value)",
-            fn = function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end
-        })
+        table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end)
     end
-
     if ac.PenaltyType.EngineRestrictor ~= nil then
-        table.insert(attempts, {
-            name = "physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value)",
-            fn = function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end
-        })
+        table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end)
+    end
+    table.insert(attempts, function() ac.setCarRestrictor(0, value) end)
+    table.insert(attempts, function() physics.setExtraRestrictor(value) end)
+
+    for _, fn in ipairs(attempts) do
+        local ok = pcall(fn)
+        if ok then return true end
     end
 
-    table.insert(attempts, {
-        name = "ac.setCarRestrictor(0, value)",
-        fn = function() ac.setCarRestrictor(0, value) end
-    })
-    table.insert(attempts, {
-        name = "physics.setExtraRestrictor(value)",
-        fn = function() physics.setExtraRestrictor(value) end
-    })
-
-    for _, attempt in ipairs(attempts) do
-        local ok, err = pcall(attempt.fn)
-        if ok then
-            return true
-        end
-    end
-
-    -- Respaldo: bloquea la caja de cambios (te deja en neutro / sin poder meter marcha)
-    local ok, err = pcall(function() physics.lockUserGearboxFor(restrictorDuration, true) end)
-    if not ok then
-        ac.log("[ROLLINGSTART] ERROR con alternativa de caja: " .. tostring(err))
-    end
+    -- Respaldo: bloquea la caja de cambios (te deja sin poder meter marcha)
+    pcall(function() physics.lockUserGearboxFor(restrictorDuration, true) end)
     return false
 end
 
 function script.update(dt)
-    -- Detecta el momento en que se da la largada (pasa de activo a inactivo)
-    if prevEnabled and not state.enabled then
-        greenFlashTimer = greenHoldTime
-    end
-    prevEnabled = state.enabled
-
-    if greenFlashTimer > 0 then
-        greenFlashTimer = math.max(greenFlashTimer - dt, 0)
-    end
-
-    -- Fade del panel
+    -- Fade del conjunto (semáforo + panel)
     local fadeSpeed = 3.5
-    if state.enabled or restrictorActive or greenFlashTimer > 0 then
+    if phase ~= "off" then
         state.alpha = math.min(state.alpha + dt * fadeSpeed, 1)
     else
         state.alpha = math.max(state.alpha - dt * fadeSpeed, 0)
     end
 
-    -- Cuenta regresiva de la penalidad activa
-    if restrictorTimer > 0 then
-        restrictorTimer = restrictorTimer - dt
-        if restrictorTimer <= 0 then
-            restrictorTimer = 0
-            restrictorActive = false
-            applyRestrictor(0)
-        end
-    end
+    if phase == "sequence" then
+        if sim.currentSessionTime < startTime + delayTime then
+            -- Fase roja: se exige respetar el límite de velocidad
+            if car.speedKmh > maxSpeed + speedMargin then
+                if not overSpeedFlag then
+                    overSpeedFlag = true
+                    ac.sendChatMessage(
+                        car:driverName() ..
+                        " superó los " .. maxSpeed .. " km/h durante la largada en movimiento. Restrictor aplicado."
+                    )
+                    applyRestrictor(restrictorValue)
+                    restrictorActive = true
+                    restrictorTimer = restrictorDuration
+                end
+            else
+                overSpeedFlag = false
+            end
 
-    -- Control de velocidad
-    if state.enabled then
-        if car.speedKmh > maxSpeed + speedMargin then
-            if not overSpeedFlag then
-                overSpeedFlag = true
-                ac.sendChatMessage(
-                    car:driverName() ..
-                    " superó los " .. maxSpeed .. " km/h en la largada en movimiento. Restrictor aplicado por " ..
-                    restrictorDuration .. "s."
-                )
-                applyRestrictor(restrictorValue)
-                restrictorActive = true
-                restrictorTimer = restrictorDuration
+            if restrictorTimer > 0 then
+                restrictorTimer = restrictorTimer - dt
+                if restrictorTimer <= 0 then
+                    restrictorTimer = 0
+                    restrictorActive = false
+                    applyRestrictor(0)
+                end
             end
         else
+            -- Se dio el verde: se saca el restrictor sí o sí
+            if restrictorActive or restrictorTimer > 0 then
+                restrictorActive = false
+                restrictorTimer = 0
+                applyRestrictor(0)
+            end
             overSpeedFlag = false
+
+            -- Tras el tiempo de flash verde, todo vuelve a apagarse solo
+            if sim.currentSessionTime > startTime + delayTime + greenHoldTime * 1000 then
+                phase = "off"
+            end
         end
-    else
-        overSpeedFlag = false
     end
 end
 
@@ -199,87 +205,100 @@ local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
 end
 
-function script.drawUI()
-    if state.alpha <= 0 then
-        return
+local function drawGantry(centerX, y)
+    local radius = 26
+    local spacing = radius * 2.4
+    local panelWidth = (lightCount - 1) * spacing + radius * 2 + 44
+    local panelHeight = radius * 2 + 44
+    local x = centerX - panelWidth * 0.5
+
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0.03, 0.03, 0.03, 0.92), 14)
+    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0.16, 0.16, 0.16, 1), 14, 0, 2)
+
+    local lightsY = y + panelHeight * 0.5
+    local lightsStartX = x + 22 + radius
+
+    local litColor
+    local blinkOn = true
+
+    if phase == "yellow" then
+        litColor = neonYellow
+        local blinkInterval = 400
+        blinkOn = math.floor(sim.currentSessionTime / blinkInterval) % 2 == 0
+    elseif phase == "sequence" and sim.currentSessionTime >= startTime + delayTime then
+        litColor = neonGreen
+        local blinkInterval = 180
+        blinkOn = math.floor(sim.currentSessionTime / blinkInterval) % 2 == 0
+    else
+        litColor = neonRed
     end
 
-    local phase = nil
-    if state.enabled then
-        phase = "red"
-    elseif greenFlashTimer > 0 then
-        phase = "green"
+    for i = 1, lightCount, 1 do
+        local center = vec2(lightsStartX + (i - 1) * spacing, lightsY)
+
+        ui.drawCircleFilled(center, radius + 6, alphaColor(0.10, 0.10, 0.10, 1), 32)
+        ui.drawCircle(center, radius + 6, alphaColor(0.22, 0.22, 0.22, 1), 32, 1.5)
+
+        local isLit
+        if phase == "yellow" then
+            isLit = blinkOn
+        elseif phase == "sequence" then
+            if sim.currentSessionTime >= startTime + delayTime then
+                isLit = blinkOn
+            else
+                isLit = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
+            end
+        else
+            isLit = false
+        end
+
+        if isLit then
+            ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.12), 32)
+            ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.28), 32)
+            ui.drawCircleFilled(center, radius, rgbm(litColor.r, litColor.g, litColor.b, state.alpha), 32)
+            ui.drawCircle(center, radius, alphaColor(1, 1, 1, 0.35), 32, 1)
+        else
+            ui.drawCircleFilled(center, radius, alphaColor(0.16, 0.02, 0.02, 1), 32)
+        end
     end
+end
 
-    local panelWidth = 700
-    local panelHeight = 300
-    local x = (screen.w - panelWidth) * 0.5
-    local y = 110
+local function drawInfoPanel(centerX, y)
+    local panelWidth = 420
+    local panelHeight = 110
+    local x = centerX - panelWidth * 0.5
 
-    -- Carcasa del panel
     local borderColor
     if restrictorActive then
         borderColor = alphaColor(1.0, 0.15, 0.1)
+    elseif phase == "yellow" then
+        borderColor = alphaColor(1.0, 0.75, 0.0)
     else
         borderColor = alphaColor(1.0, 0.82, 0.0)
     end
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0.03, 0.03, 0.03, 0.92), 14)
-    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), borderColor, 14, 0, 3)
 
-    ------------------------------------------------
-    -- Título
-    ------------------------------------------------
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0, 0, 0, 0.88), 10)
+    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), borderColor, 10, 0, 3)
+
     ui.pushFont(ui.Font.Title)
     local titleSize = ui.measureText(title)
-    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + 22))
+    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + 18))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
     ui.text(title)
     ui.popStyleColor()
     ui.popFont()
 
-    ------------------------------------------------
-    -- Semáforo tipo gantry (rojo = límite activo, verde = largada dada)
-    ------------------------------------------------
-    if phase ~= nil then
-        local litColor = (phase == "red") and neonRed or neonGreen
-        local radius = 26
-        local lightsRowY = y + 130
-        local lightsStartX = x + (panelWidth - (lightCount - 1) * (radius * 2.4)) * 0.5
-
-        local blinkOn = true
-        if phase == "green" then
-            local blinkInterval = 180
-            blinkOn = math.floor(sim.currentSessionTime / blinkInterval) % 2 == 0
-        end
-
-        for i = 1, lightCount, 1 do
-            local center = vec2(lightsStartX + (i - 1) * radius * 2.4, lightsRowY)
-
-            -- Portalámpara (bezel oscuro)
-            ui.drawCircleFilled(center, radius + 6, alphaColor(0.10, 0.10, 0.10, 1), 32)
-            ui.drawCircle(center, radius + 6, alphaColor(0.22, 0.22, 0.22, 1), 32, 1.5)
-
-            local isLit = (phase == "red") or (phase == "green" and blinkOn)
-            if isLit then
-                ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.12), 32)
-                ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.28), 32)
-                ui.drawCircleFilled(center, radius, rgbm(litColor.r, litColor.g, litColor.b, state.alpha), 32)
-                ui.drawCircle(center, radius, alphaColor(1, 1, 1, 0.35), 32, 1)
-            else
-                ui.drawCircleFilled(center, radius, alphaColor(0.16, 0.02, 0.02, 1), 32)
-            end
-        end
+    local subtitle
+    if phase == "yellow" then
+        subtitle = "VELOCIDAD LIBRE   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
+    else
+        subtitle = "MÁXIMO " .. maxSpeed .. " KM/H   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
     end
-
-    ------------------------------------------------
-    -- Límite de velocidad / velocidad actual
-    ------------------------------------------------
-    local subtitle = "MÁXIMO " .. maxSpeed .. " KM/H   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
     ui.pushFont(ui.Font.Main)
     local subSize = ui.measureText(subtitle)
-    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + 200))
+    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + 62))
     local speedColor
-    if car.speedKmh > maxSpeed + speedMargin then
+    if phase == "sequence" and car.speedKmh > maxSpeed + speedMargin then
         speedColor = alphaColor(1.0, 0.2, 0.15)
     else
         speedColor = alphaColor(1, 1, 1)
@@ -289,19 +308,25 @@ function script.drawUI()
     ui.popStyleColor()
     ui.popFont()
 
-    ------------------------------------------------
-    -- Aviso de penalidad
-    ------------------------------------------------
     if restrictorActive then
-        local warnText = "¡RESTRICTOR ACTIVO! (" .. math.ceil(restrictorTimer) .. "s)"
-        ui.pushFont(ui.Font.Main)
+        local warnText = "¡RESTRICTOR ACTIVO!"
+        ui.pushFont(ui.Font.Small)
         local warnSize = ui.measureText(warnText)
-        ui.setCursor(vec2(x + (panelWidth - warnSize.x) * 0.5, y + 250))
+        ui.setCursor(vec2(x + (panelWidth - warnSize.x) * 0.5, y + 90))
         local blink = (math.floor(sim.currentSessionTime / 200) % 2 == 0)
-        local warnAlphaMult = blink and 1 or 0.35
-        ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.15, 0.1, warnAlphaMult))
+        ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.15, 0.1, blink and 1 or 0.35))
         ui.text(warnText)
         ui.popStyleColor()
         ui.popFont()
     end
+end
+
+function script.drawUI()
+    if state.alpha <= 0 then
+        return
+    end
+
+    local centerX = screen.w * 0.5
+    drawGantry(centerX, 90)
+    drawInfoPanel(centerX, 230)
 end
