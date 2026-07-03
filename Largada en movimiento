@@ -26,12 +26,26 @@ local restrictorActive = false
 local restrictorTimer = 0
 local overSpeedFlag = false
 
+-- Sonido
+local beepURL = ""
+local beepSound = nil
+local soundVolumeMultiplier = 2.5
+
 local title = "LARGADA EN MOVIMIENTO"
 
 local lightCount = 6
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
 local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
 local neonYellow = rgbm(1.6, 1.1, 0.05, 1)
+
+-- Estado de las luces, calculado una vez por frame en script.update y usado por drawGantry
+local litMode = "red" -- "yellow" | "red" | "green"
+local lightsOn = {}
+local prevLightsOn = {}
+for i = 1, lightCount, 1 do
+    lightsOn[i] = false
+    prevLightsOn[i] = false
+end
 
 local screen = {
     w = sim.windowWidth,
@@ -52,6 +66,12 @@ local function logAvailablePenaltyTypes()
     end)
 end
 
+local function resetLightEdges()
+    for i = 1, lightCount, 1 do
+        prevLightsOn[i] = false
+    end
+end
+
 rollingStartEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Rolling Start"),
     phase = ac.StructItem.float(),     -- 0 = off, 1 = yellow, 2 = sequence
@@ -60,11 +80,13 @@ rollingStartEvent = ac.OnlineEvent({
 }, function(sender, message)
     if message.phase == 1 then
         phase = "yellow"
+        resetLightEdges()
     elseif message.phase == 2 then
         phase = "sequence"
         startTime = message.startTime
         delayTime = message.delayTime
         overSpeedFlag = false
+        resetLightEdges()
     else
         phase = "off"
         restrictorActive = false
@@ -96,6 +118,18 @@ ac.onOnlineWelcome(function(message, config)
     lightsOutMin = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 3, 1) * 1000
     lightsOutMax = config:get("ROLLINGSTART", "RANDOM_DELAY_RANGE", 5, 2) * 1000
 
+    beepURL = config:get("ROLLINGSTART", "SOUND_BEEP_URL", "")
+    soundVolumeMultiplier = config:get("ROLLINGSTART", "SOUND_VOLUME_MULTIPLIER", 2.5)
+    if beepURL ~= "" then
+        local ok, result = pcall(function() return ui.MediaPlayer(beepURL) end)
+        if ok then
+            beepSound = result
+            ac.log("[ROLLINGSTART] Beep sound cargado OK: " .. beepURL)
+        else
+            ac.log("[ROLLINGSTART] ERROR cargando beep sound (" .. beepURL .. "): " .. tostring(result))
+        end
+    end
+
     ui.registerOnlineExtra(
         ui.Icons.Warning,
         "🚦 Largada en Movimiento",
@@ -104,6 +138,7 @@ ac.onOnlineWelcome(function(message, config)
         function()
             if phase == "off" then
                 phase = "yellow"
+                resetLightEdges()
                 rollingStartEvent({ phase = 1, startTime = 0, delayTime = 0 })
             elseif phase == "yellow" then
                 local st = sim.currentSessionTime + seqDuration
@@ -112,6 +147,7 @@ ac.onOnlineWelcome(function(message, config)
                 startTime = st
                 delayTime = dt
                 overSpeedFlag = false
+                resetLightEdges()
                 rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
             else
                 -- Ya en secuencia: cancelar y volver a apagado
@@ -149,6 +185,17 @@ local function applyRestrictor(value)
     return false
 end
 
+local function playBeep()
+    if not beepSound then return end
+    local ok, err = pcall(function()
+        beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        beepSound:play()
+    end)
+    if not ok then
+        ac.log("[ROLLINGSTART] ERROR reproduciendo beep: " .. tostring(err))
+    end
+end
+
 function script.update(dt)
     -- Fade del conjunto (semáforo + panel)
     local fadeSpeed = 3.5
@@ -156,6 +203,39 @@ function script.update(dt)
         state.alpha = math.min(state.alpha + dt * fadeSpeed, 1)
     else
         state.alpha = math.max(state.alpha - dt * fadeSpeed, 0)
+    end
+
+    -- Calcula el estado de las luces (una vez por frame, usado también para el sonido)
+    if phase == "yellow" then
+        litMode = "yellow"
+        local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+        for i = 1, lightCount, 1 do
+            lightsOn[i] = blinkOn
+        end
+    elseif phase == "sequence" then
+        if sim.currentSessionTime < startTime + delayTime then
+            litMode = "red"
+            for i = 1, lightCount, 1 do
+                local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
+                if isOn and not prevLightsOn[i] then
+                    playBeep()
+                end
+                lightsOn[i] = isOn
+            end
+        else
+            litMode = "green"
+            local blinkOn = math.floor(sim.currentSessionTime / 180) % 2 == 0
+            for i = 1, lightCount, 1 do
+                lightsOn[i] = blinkOn
+            end
+        end
+    else
+        for i = 1, lightCount, 1 do
+            lightsOn[i] = false
+        end
+    end
+    for i = 1, lightCount, 1 do
+        prevLightsOn[i] = lightsOn[i]
     end
 
     if phase == "sequence" then
@@ -218,19 +298,11 @@ local function drawGantry(centerX, y)
     local lightsY = y + panelHeight * 0.5
     local lightsStartX = x + 22 + radius
 
-    local litColor
-    local blinkOn = true
-
-    if phase == "yellow" then
+    local litColor = neonRed
+    if litMode == "yellow" then
         litColor = neonYellow
-        local blinkInterval = 400
-        blinkOn = math.floor(sim.currentSessionTime / blinkInterval) % 2 == 0
-    elseif phase == "sequence" and sim.currentSessionTime >= startTime + delayTime then
+    elseif litMode == "green" then
         litColor = neonGreen
-        local blinkInterval = 180
-        blinkOn = math.floor(sim.currentSessionTime / blinkInterval) % 2 == 0
-    else
-        litColor = neonRed
     end
 
     for i = 1, lightCount, 1 do
@@ -239,20 +311,7 @@ local function drawGantry(centerX, y)
         ui.drawCircleFilled(center, radius + 6, alphaColor(0.10, 0.10, 0.10, 1), 32)
         ui.drawCircle(center, radius + 6, alphaColor(0.22, 0.22, 0.22, 1), 32, 1.5)
 
-        local isLit
-        if phase == "yellow" then
-            isLit = blinkOn
-        elseif phase == "sequence" then
-            if sim.currentSessionTime >= startTime + delayTime then
-                isLit = blinkOn
-            else
-                isLit = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
-            end
-        else
-            isLit = false
-        end
-
-        if isLit then
+        if lightsOn[i] then
             ui.drawCircleFilled(center, radius * 2.1, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.12), 32)
             ui.drawCircleFilled(center, radius * 1.5, rgbm(litColor.r, litColor.g, litColor.b, state.alpha * 0.28), 32)
             ui.drawCircleFilled(center, radius, rgbm(litColor.r, litColor.g, litColor.b, state.alpha), 32)
@@ -327,6 +386,10 @@ function script.drawUI()
     end
 
     local centerX = screen.w * 0.5
-    drawGantry(centerX, 90)
-    drawInfoPanel(centerX, 230)
+    local panelY = 90
+    local panelHeight = 110
+    local gantryY = panelY + panelHeight + 20
+
+    drawInfoPanel(centerX, panelY)
+    drawGantry(centerX, gantryY)
 end
