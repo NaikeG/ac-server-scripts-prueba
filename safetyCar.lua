@@ -30,6 +30,16 @@ local function applyRestrictor(value)
     return false
 end
 
+local function applyRestrictorQuiet(value)
+    local ok = pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, value) end)
+    if not ok then
+        ok = pcall(function() ac.setCarRestrictor(0, value) end)
+    end
+    if not ok then
+        pcall(function() physics.setExtraRestrictor(value) end)
+    end
+end
+
 local function onSafetyCarStateChanged()
     if state.enabled then
         applyRestrictor(restrictorValue)
@@ -117,6 +127,7 @@ function script.update(dt)
     local speed = 3.5
     if state.enabled then
         state.alpha = math.min(state.alpha + dt * speed, 1)
+        applyRestrictorQuiet(restrictorValue)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
@@ -256,4 +267,5 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
+
 
