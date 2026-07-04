@@ -206,7 +206,8 @@ function script.update(dt)
     -- por si el teletransporte a pits al terminar la sesión corta la ejecución justo
     -- en el frame donde se incrementa el contador de vueltas.
     local totalLaps = getTotalLaps()
-    if totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
+    local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
+    if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
         winnerAnnounced = true
         local msg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
         ac.sendChatMessage(msg)
