@@ -18,7 +18,9 @@ local function applyRestrictor(value)
     for _, fn in ipairs(attempts) do
         local ok, err = pcall(fn)
         if ok then
-            ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor: " .. tostring(value) .. ")")
+            local okRead, currentVal = pcall(function() return car.restrictor end)
+            ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor pedido: " .. tostring(value) ..
+                ", car.restrictor ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
             return true
         else
             ac.log("[SAFETYCAR] Intento fallido: " .. tostring(err))
