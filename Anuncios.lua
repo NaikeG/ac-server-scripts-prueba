@@ -128,17 +128,74 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 ac.onSessionStart(function()
-    -- Reset de estado al arrancar una sesión nueva
-    bestLapTimeMs = nil
-    bestLapDriver = nil
-    winnerAnnounced = false
-    prevLapCount = nil
+    -- No reseteamos acá directamente: car.lapCount puede no haber bajado a 0 todavía
+    -- en el instante exacto de este evento (causaba el doble anuncio). El reset real
+    -- ocurre en script.update cuando se detecta que lapCount volvió a 0.
+    sessionJustStarted = true
 end)
 
+-- ===== Carteles visuales en pantalla =====
+local sim2 = ac.getSim()
+local screen = { w = sim2.windowWidth, h = sim2.windowHeight }
+ac.onResolutionChange(function()
+    screen.w = ac.getSim().windowWidth
+    screen.h = ac.getSim().windowHeight
+end)
+
+local banner = { text = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
+
+local function showBanner(text, color, duration)
+    banner.text = text
+    banner.color = color
+    banner.timer = duration or 5
+end
+
+function script.drawUI()
+    if banner.timer > 0 then
+        banner.alpha = math.min(banner.alpha + 0.08, 1)
+    else
+        banner.alpha = math.max(banner.alpha - 0.08, 0)
+    end
+
+    if banner.alpha <= 0 then
+        return
+    end
+
+    local panelWidth = 620
+    local panelHeight = 90
+    local x = (screen.w - panelWidth) * 0.5
+    local y = 60
+
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * banner.alpha), 10)
+    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight),
+        rgbm(banner.color.r, banner.color.g, banner.color.b, banner.alpha), 10, 0, 3)
+
+    ui.pushFont(ui.Font.Title)
+    local textSize = ui.measureText(banner.text)
+    ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(banner.color.r, banner.color.g, banner.color.b, banner.alpha))
+    ui.text(banner.text)
+    ui.popStyleColor()
+    ui.popFont()
+end
+
 function script.update(dt)
+    if banner.timer > 0 then
+        banner.timer = banner.timer - dt
+    end
+
     if prevLapCount == nil then
         prevLapCount = car.lapCount
         return
+    end
+
+    -- Reset real de estado: recién cuando el contador de vueltas vuelve a 0 de verdad
+    -- (evita el doble anuncio que pasaba al resetear ciegamente en onSessionStart)
+    if car.lapCount == 0 and prevLapCount > 0 then
+        bestLapTimeMs = nil
+        bestLapDriver = nil
+        winnerAnnounced = false
+        ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
     -- Chequeo de fin de carrera: se evalúa cada frame, no solo al completar una vuelta,
@@ -147,7 +204,9 @@ function script.update(dt)
     local totalLaps = getTotalLaps()
     if totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
         winnerAnnounced = true
-        ac.sendChatMessage("🏆 " .. car:driverName() .. " ha ganado la carrera!")
+        local msg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
+        ac.sendChatMessage(msg)
+        showBanner(msg, rgbm(1.0, 0.82, 0.0, 1), 6)
         ac.log("[ANNOUNCE] GANADOR detectado: " .. car:driverName() .. " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
         raceFinishedEvent({})
     end
@@ -167,7 +226,9 @@ function script.update(dt)
                 if bestLapTimeMs == nil or lapTimeMs < bestLapTimeMs then
                     bestLapTimeMs = lapTimeMs
                     bestLapDriver = car:driverName()
-                    ac.sendChatMessage("⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs))
+                    local msg = "⏱️ NUEVA VUELTA RÁPIDA: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
+                    ac.sendChatMessage(msg)
+                    showBanner(msg, rgbm(0.2, 0.8, 1.0, 1), 5)
                     lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
                 end
             end
