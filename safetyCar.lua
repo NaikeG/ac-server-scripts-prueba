@@ -10,6 +10,50 @@ local state = {
 -- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
 local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima. Reduce la potencia del motor mientras el SC está afuera.
 
+local function diagnosePhysicsRestrictor()
+    local candidates = {
+        "setRestrictor", "setCarRestrictor", "setRestrictorPercentage",
+        "setBallast", "setCarBallast", "setBoP", "setBalanceOfPower",
+        "setEngineRestrictor", "setExtraRestrictor", "setTurboRestrictor",
+        "overrideRestrictor", "restrictor"
+    }
+    local found = {}
+    local missing = {}
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return physics[name] end)
+        if ok and val ~= nil then
+            table.insert(found, name)
+        else
+            table.insert(missing, name)
+        end
+    end
+    ac.log("[SAFETYCAR] physics.* ENCONTRADAS: " .. table.concat(found, ", "))
+    ac.log("[SAFETYCAR] physics.* NO encontradas: " .. table.concat(missing, ", "))
+
+    local okPairs, errPairs = pcall(function()
+        local names = {}
+        for k, v in pairs(physics) do
+            table.insert(names, tostring(k))
+        end
+        table.sort(names)
+        ac.log("[SAFETYCAR] pairs(physics) completo (" .. #names .. "): " .. table.concat(names, ", "))
+    end)
+    if not okPairs then
+        ac.log("[SAFETYCAR] pairs(physics) falló: " .. tostring(errPairs))
+    end
+
+    -- También reviso si "car" tiene algún campo de restrictor/ballast directamente
+    local carCandidates = { "restrictor", "ballast", "restrictorPercent", "ballastKg" }
+    local carFound = {}
+    for _, name in ipairs(carCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and val ~= nil then
+            table.insert(carFound, name .. "=" .. tostring(val))
+        end
+    end
+    ac.log("[SAFETYCAR] car.restrictor/ballast encontrados: " .. table.concat(carFound, ", "))
+end
+
 local function applyRestrictor(value)
     local attempts = {}
     table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.SlowDown, value) end)
@@ -121,6 +165,8 @@ ac.onOnlineWelcome(function(message, config)
         end,
         adminFlag
     )
+
+    diagnosePhysicsRestrictor()
 end)
 
 function script.update(dt)
@@ -267,5 +313,3 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
-
-
