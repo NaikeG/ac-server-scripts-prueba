@@ -45,7 +45,7 @@ local function applyThrottleCap(dt)
     end
 
     local okForce, err = pcall(function()
-        physics.forceUserThrottleFor(dt * 2, maxThrottle)
+        physics.forceUserThrottleFor(0.15, maxThrottle)
     end)
     if not okForce then
         ac.log("[SAFETYCAR] ERROR con forceUserThrottleFor: " .. tostring(err))
@@ -59,7 +59,7 @@ end
 local function onSafetyCarStateChanged()
     if state.enabled then
         applyRestrictor(restrictorValue)
-        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue))
+        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " maxThrottle=" .. tostring(maxThrottle))
     else
         applyRestrictor(0)
         ac.log("[SAFETYCAR] Desactivado, potencia normal restaurada")
