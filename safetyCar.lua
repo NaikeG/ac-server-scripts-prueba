@@ -24,14 +24,32 @@ local function applyRestrictor(value)
     return ok
 end
 
+local throttleFieldLogged = false
+
 local function applyThrottleCap(dt)
-    local ok, err = pcall(function()
+    local ok, currentGas = pcall(function() return car.gas end)
+    local fieldUsed = "gas"
+    if not ok then
+        ok, currentGas = pcall(function() return car.throttle end)
+        fieldUsed = "throttle"
+    end
+
+    if not throttleFieldLogged then
+        throttleFieldLogged = true
+        ac.log("[SAFETYCAR] Campo de acelerador usado: car." .. fieldUsed .. " = " .. tostring(currentGas))
+    end
+
+    -- Si no pisás más que el límite (soltaste o estás frenando), no se toca nada
+    if not ok or currentGas == nil or currentGas <= maxThrottle then
+        return
+    end
+
+    local okForce, err = pcall(function()
         physics.forceUserThrottleFor(dt * 2, maxThrottle)
     end)
-    if not ok then
+    if not okForce then
         ac.log("[SAFETYCAR] ERROR con forceUserThrottleFor: " .. tostring(err))
     end
-    return ok
 end
 
 local function applyRestrictorQuiet(value)
