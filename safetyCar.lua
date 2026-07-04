@@ -7,56 +7,10 @@ local state = {
     alpha = 0
 }
 
--- ===== Congelamiento de posiciones bajo Safety Car =====
-local positionFieldName = nil
-local positionFieldLogged = false
-local function findPositionField()
-    if positionFieldLogged then return positionFieldName end
-    positionFieldLogged = true
-    local candidates = { "racePosition", "position", "leaderboardPosition", "place", "raceOrder", "racePos", "sessionPosition" }
-    for _, name in ipairs(candidates) do
-        local ok, val = pcall(function() return car[name] end)
-        if ok and type(val) == "number" and val > 0 then
-            ac.log("[SAFETYCAR] Campo de posición encontrado: car." .. name .. " = " .. tostring(val))
-            positionFieldName = name
-            return name
-        end
-    end
-    ac.log("[SAFETYCAR] No se encontró ningún campo de posición válido en car")
-    return nil
-end
+-- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
+local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima. Reduce la potencia del motor mientras el SC está afuera.
 
-local function getRacePosition()
-    if positionFieldName == nil then
-        findPositionField()
-    end
-    if positionFieldName == nil then return nil end
-    local ok, val = pcall(function() return car[positionFieldName] end)
-    if ok then return val end
-    return nil
-end
-
-local frozenPosition = nil
-local warningActive = false
-local warningTimer = 0
-local WARNING_DURATION = 15 -- segundos para devolver la posición antes del Restrictor
-
-local function onSafetyCarStateChanged()
-    if state.enabled then
-        frozenPosition = getRacePosition()
-        warningActive = false
-        warningTimer = 0
-        if frozenPosition then
-            ac.log("[SAFETYCAR] Posición congelada en: " .. tostring(frozenPosition))
-        end
-    else
-        frozenPosition = nil
-        warningActive = false
-        warningTimer = 0
-    end
-end
-
-local function applyOvertakeRestrictor(value)
+local function applyRestrictor(value)
     local attempts = {}
     if ac.PenaltyType.Restrictor ~= nil then
         table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end)
@@ -72,12 +26,18 @@ local function applyOvertakeRestrictor(value)
         if ok then return true end
     end
 
-    -- Respaldo: bloquea la caja de cambios (te deja sin poder meter marcha)
-    local ok, err = pcall(function() physics.lockUserGearboxFor(5, true) end)
-    if not ok then
-        ac.log("[SAFETYCAR] ERROR con alternativa de caja: " .. tostring(err))
-    end
+    ac.log("[SAFETYCAR] Ninguna función de restrictor funcionó, no se pudo reducir potencia")
     return false
+end
+
+local function onSafetyCarStateChanged()
+    if state.enabled then
+        applyRestrictor(restrictorValue)
+        ac.log("[SAFETYCAR] Restrictor aplicado (potencia reducida): " .. tostring(restrictorValue))
+    else
+        applyRestrictor(0)
+        ac.log("[SAFETYCAR] Restrictor removido, potencia normal restaurada")
+    end
 end
 
 local screen = {
@@ -121,6 +81,8 @@ ac.onOnlineWelcome(function(message, config)
         adminFlag = ui.OnlineExtraFlags.Admin
     end
 
+    restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 0.5)
+
     activateURL = config:get("SAFETYCAR", "SOUND_ACTIVATE_URL", "")
     soundVolumeMultiplier = config:get("SAFETYCAR", "SOUND_VOLUME_MULTIPLIER", 2.5)
     if activateURL ~= "" then
@@ -149,8 +111,6 @@ ac.onOnlineWelcome(function(message, config)
         end,
         adminFlag
     )
-
-    findPositionField()
 end)
 
 function script.update(dt)
@@ -169,41 +129,6 @@ function script.update(dt)
         end)
         if not ok then
             ac.log("[SAFETYCAR] ERROR reproduciendo sonido: " .. tostring(err))
-        end
-    end
-
-    -- Vigilancia de posiciones congeladas
-    if state.enabled and frozenPosition then
-        local current = getRacePosition()
-        if current then
-            if not warningActive and current < frozenPosition then
-                -- Adelantamiento detectado: arranca el aviso y la cuenta regresiva
-                warningActive = true
-                warningTimer = WARNING_DURATION
-                ac.sendChatMessage(
-                    "⚠️ " .. car:driverName() ..
-                    ": ADELANTAMIENTO ILEGAL bajo Safety Car. Devolvé la posición en " ..
-                    WARNING_DURATION .. "s o se aplicará un Restrictor."
-                )
-            elseif warningActive then
-                if current >= frozenPosition then
-                    -- Devolvió la posición a tiempo
-                    warningActive = false
-                    warningTimer = 0
-                    ac.sendChatMessage(car:driverName() .. " devolvió la posición correctamente.")
-                else
-                    warningTimer = warningTimer - dt
-                    if warningTimer <= 0 then
-                        warningActive = false
-                        warningTimer = 0
-                        ac.sendChatMessage(
-                            car:driverName() ..
-                            " no devolvió la posición a tiempo. Restrictor aplicado."
-                        )
-                        applyOvertakeRestrictor(1.0)
-                    end
-                end
-            end
         end
     end
 end
@@ -245,93 +170,6 @@ local function drawContent(originX, originY)
     return boxWidth, blackHeight + yellowHeight
 end
 
--- ===== Arrastre manual con Ctrl + Click (igual gesto que las apps tipo Real Penalty) =====
-
-local ctrlKeyIndex = nil
-local function findCtrlKeyIndex()
-    local candidates = { "LeftControl", "LCtrl", "Control", "Ctrl", "LeftCtrl", "ControlLeft", "LControl" }
-    for _, name in ipairs(candidates) do
-        local ok, val = pcall(function() return ui.KeyIndex[name] end)
-        if ok and val ~= nil then
-            ac.log("[SAFETYCAR] Ctrl encontrado como ui.KeyIndex." .. name)
-            return val
-        end
-    end
-    ac.log("[SAFETYCAR] No se encontró ninguna variante de Ctrl en ui.KeyIndex")
-    return nil
-end
-
-local function isMouseButtonDown()
-    local ok, val = pcall(function() return ui.mouseDown(0) end)
-    if ok then return val end
-    return false
-end
-
-local function getMousePos()
-    local ok, val = pcall(function() return ui.mousePos() end)
-    if ok then return val end
-    return nil
-end
-
-local function isCtrlDown()
-    if not ctrlKeyIndex then return false end
-    local ok, val = pcall(function() return ui.keyboardButtonDown(ctrlKeyIndex) end)
-    if ok then return val end
-    return false
-end
-
--- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
-local cfg = ac.storage({
-    posX = 552 / 1920,  -- proporción de pantalla, no píxeles fijos
-    posY = 213 / 1080
-})
-
-local dragging = false
-local dragOffsetX, dragOffsetY = 0, 0
-local boxW, boxH = 150, 150
-
-local function drawWarningPanel()
-    if not warningActive then return end
-
-    local panelWidth = 520
-    local panelHeight = 130
-    local x = (screen.w - panelWidth) * 0.5
-    local y = 90
-
-    local blink = (math.floor(sim.currentSessionTime / 250) % 2 == 0)
-    local borderAlpha = blink and 1 or 0.4
-
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.02, 0.02, 0.92), 10)
-    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(1.0, 0.15, 0.1, borderAlpha), 10, 0, 3)
-
-    ui.pushFont(ui.Font.Title)
-    local title = "ADELANTAMIENTO ILEGAL"
-    local titleSize = ui.measureText(title)
-    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + 14))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1.0, 0.2, 0.15, 1))
-    ui.text(title)
-    ui.popStyleColor()
-    ui.popFont()
-
-    ui.pushFont(ui.Font.Main)
-    local subtitle = "DEVOLVER POSICIÓN"
-    local subSize = ui.measureText(subtitle)
-    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + 56))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
-    ui.text(subtitle)
-    ui.popStyleColor()
-    ui.popFont()
-
-    ui.pushFont(ui.Font.Huge)
-    local countdownText = tostring(math.ceil(math.max(warningTimer, 0)))
-    local countSize = ui.measureText(countdownText)
-    ui.setCursor(vec2(x + (panelWidth - countSize.x) * 0.5, y + 82))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1.0, 0.85, 0.0, 1))
-    ui.text(countdownText)
-    ui.popStyleColor()
-    ui.popFont()
-end
-
 local function drawSidePanel(x, y, height)
     local panelWidth = 300
     local title = "SAFETY CAR"
@@ -359,9 +197,31 @@ local function drawSidePanel(x, y, height)
     return panelWidth
 end
 
-function script.drawUI()
-    drawWarningPanel()
+-- ===== Arrastre manual con click sostenido =====
 
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+-- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
+local cfg = ac.storage({
+    posX = 552 / 1920,  -- proporción de pantalla, no píxeles fijos
+    posY = 213 / 1080
+})
+
+local dragging = false
+local dragOffsetX, dragOffsetY = 0, 0
+local boxW, boxH = 150, 150
+
+function script.drawUI()
     if state.alpha <= 0 then
         return
     end
