@@ -8,40 +8,42 @@ local state = {
 }
 
 -- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
-local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima (reduce potencia del motor)
-local slowDownValue = 1.0   -- intensidad del tope de velocidad tipo "corte de curva" (a ajustar según se sienta en el juego)
+-- IMPORTANTE: escala 0-100 (porcentaje), NO 0-1. Ej: 80 = 80% de restricción.
+local restrictorValue = 80
+local maxThrottle = 0.15 -- tope forzado del acelerador (0 = no acelera nada, 1 = sin límite)
 
-local function applyRestrictor(value, slowValue)
-    local restrictorOk, restrictorErr = pcall(function() physics.setCarRestrictor(0, value) end)
-    if restrictorOk then
+local function applyRestrictor(value)
+    local ok, err = pcall(function() physics.setCarRestrictor(0, value) end)
+    if ok then
         local okRead, currentVal = pcall(function() return car.restrictor end)
         ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor pedido: " .. tostring(value) ..
             ", car.restrictor ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
     else
-        ac.log("[SAFETYCAR] ERROR aplicando restrictor: " .. tostring(restrictorErr))
+        ac.log("[SAFETYCAR] ERROR aplicando restrictor: " .. tostring(err))
     end
-
-    local slowOk, slowErr = pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, slowValue) end)
-    if slowOk then
-        ac.log("[SAFETYCAR] SlowDown aplicado con éxito (valor pedido: " .. tostring(slowValue) .. ")")
-    else
-        ac.log("[SAFETYCAR] ERROR aplicando SlowDown: " .. tostring(slowErr))
-    end
-
-    return restrictorOk or slowOk
+    return ok
 end
 
-local function applyRestrictorQuiet(value, slowValue)
+local function applyThrottleCap(dt)
+    local ok, err = pcall(function()
+        physics.forceUserThrottleFor(dt * 2, maxThrottle)
+    end)
+    if not ok then
+        ac.log("[SAFETYCAR] ERROR con forceUserThrottleFor: " .. tostring(err))
+    end
+    return ok
+end
+
+local function applyRestrictorQuiet(value)
     pcall(function() physics.setCarRestrictor(0, value) end)
-    pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, slowValue) end)
 end
 
 local function onSafetyCarStateChanged()
     if state.enabled then
-        applyRestrictor(restrictorValue, slowDownValue)
-        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " slowDown=" .. tostring(slowDownValue))
+        applyRestrictor(restrictorValue)
+        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue))
     else
-        applyRestrictor(0, 0)
+        applyRestrictor(0)
         ac.log("[SAFETYCAR] Desactivado, potencia normal restaurada")
     end
 end
@@ -87,8 +89,8 @@ ac.onOnlineWelcome(function(message, config)
         adminFlag = ui.OnlineExtraFlags.Admin
     end
 
-    restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 0.5)
-    slowDownValue = config:get("SAFETYCAR", "SLOWDOWN_VALUE", 1.0)
+    restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 80)
+    maxThrottle = config:get("SAFETYCAR", "MAX_THROTTLE", 0.15)
 
     activateURL = config:get("SAFETYCAR", "SOUND_ACTIVATE_URL", "")
     soundVolumeMultiplier = config:get("SAFETYCAR", "SOUND_VOLUME_MULTIPLIER", 2.5)
@@ -124,7 +126,8 @@ function script.update(dt)
     local speed = 3.5
     if state.enabled then
         state.alpha = math.min(state.alpha + dt * speed, 1)
-        applyRestrictorQuiet(restrictorValue, slowDownValue)
+        applyRestrictorQuiet(restrictorValue)
+        applyThrottleCap(dt)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
