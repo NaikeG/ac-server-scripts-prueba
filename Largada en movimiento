@@ -20,6 +20,8 @@ local lightsOutMin, lightsOutMax = 3000, 5000 -- rango de espera aleatoria tras 
 -- Estado interno de la secuencia (sincronizado por evento)
 local startTime = 0
 local delayTime = 0
+local greenForced = false -- true apenas CUALQUIER cliente detecta o recibe aviso de que llegó el verde
+local greenForcedAt = 0   -- sim.currentSessionTime local en el momento en que se tomó el verde (evita drift de reloj entre clientes)
 
 -- Estado interno del restrictor
 local restrictorActive = false
@@ -74,6 +76,16 @@ local function resetLightEdges()
     end
 end
 
+greenNowEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Rolling Start Green Now")
+}, function(sender, message)
+    if not greenForced then
+        greenForced = true
+        greenForcedAt = sim.currentSessionTime
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
 rollingStartEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Rolling Start"),
     phase = ac.StructItem.float(),     -- 0 = off, 1 = yellow, 2 = sequence
@@ -89,6 +101,7 @@ rollingStartEvent = ac.OnlineEvent({
         delayTime = message.delayTime
         overSpeedFlag = false
         greenCheckDone = false
+        greenForced = false
         resetLightEdges()
     else
         phase = "off"
@@ -142,6 +155,7 @@ local function startSequence()
     delayTime = dt
     overSpeedFlag = false
     greenCheckDone = false
+    greenForced = false
     resetLightEdges()
     rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
     ac.log("[ROLLINGSTART] Secuencia iniciada -> fase: sequence")
@@ -243,7 +257,15 @@ function script.update(dt)
             lightsOn[i] = blinkOn
         end
     elseif phase == "sequence" then
-        if sim.currentSessionTime < startTime + delayTime then
+        -- Detecta el momento del verde una sola vez y lo comparte con todos los demás clientes,
+        -- para que el corte rojo/verde no dependa del reloj individual de cada uno.
+        if not greenForced and sim.currentSessionTime >= startTime + delayTime then
+            greenForced = true
+            greenForcedAt = sim.currentSessionTime
+            greenNowEvent({})
+        end
+
+        if not greenForced then
             litMode = "red"
             for i = 1, lightCount, 1 do
                 local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
@@ -269,7 +291,7 @@ function script.update(dt)
     end
 
     if phase == "sequence" then
-        if sim.currentSessionTime < startTime + delayTime then
+        if not greenForced then
             -- Fase roja: sin control todavía
         else
             -- Se dio el verde: chequeo único de si se mantuvo el ritmo de 80 km/h
@@ -296,7 +318,7 @@ function script.update(dt)
             end
 
             -- Tras el tiempo de flash verde, todo vuelve a apagarse solo
-            if sim.currentSessionTime > startTime + delayTime + greenHoldTime * 1000 then
+            if sim.currentSessionTime > greenForcedAt + greenHoldTime * 1000 then
                 phase = "off"
                 if restrictorActive or restrictorTimer > 0 then
                     restrictorActive = false
