@@ -256,6 +256,25 @@ ac.onResolutionChange(function()
     
 end)
 ac.log(ac.getUI().uiScale)
+
+-- ===== Arrastre manual con click sostenido =====
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+-- Desplazamiento guardado por el usuario respecto a la posición central por defecto (persiste entre sesiones, por piloto)
+local posCfg = ac.storage({ offsetX = 0, offsetY = 0 })
+local dragging = false
+local dragOffsetX, dragOffsetY = 0, 0
+
 function script.drawUI() -- Panel tipo gantry F1
     --ac.debug("path", texFilePath .. "texture_trafficlight_off.png")
     --ac.debug("size", "x:" .. windowWidth .. " y:" .. windowHeight)
@@ -313,10 +332,36 @@ function script.drawUI() -- Panel tipo gantry F1
         blinkOn = math.floor(elapsed / blinkInterval) % 2 == 0
     end
 
-    local panelX1 = lightArrayStart - lightCenter.x - padding
-    local panelY1 = 256 - vGap / 2 - radius - padding
-    local panelX2 = lightArrayStart + lightWidth * (lightCount - 1) + lightCenter.x + padding
-    local panelY2 = 256 + vGap / 2 + radius + padding
+    local panelX1 = lightArrayStart - lightCenter.x - padding + posCfg.offsetX
+    local panelY1 = 256 - vGap / 2 - radius - padding + posCfg.offsetY
+    local panelX2 = lightArrayStart + lightWidth * (lightCount - 1) + lightCenter.x + padding + posCfg.offsetX
+    local panelY2 = 256 + vGap / 2 + radius + padding + posCfg.offsetY
+
+    -- Detección de arrastre sobre la carcasa
+    do
+        local mp = getMousePos()
+        local mouseIsDown = isMouseButtonDown()
+        if mp ~= nil then
+            local overPanel = mp.x >= panelX1 and mp.x <= panelX2 and mp.y >= panelY1 and mp.y <= panelY2
+            if not dragging and mouseIsDown and overPanel then
+                dragging = true
+                dragOffsetX = mp.x - posCfg.offsetX
+                dragOffsetY = mp.y - posCfg.offsetY
+            end
+            if dragging then
+                if mouseIsDown then
+                    posCfg.offsetX = mp.x - dragOffsetX
+                    posCfg.offsetY = mp.y - dragOffsetY
+                    panelX1 = lightArrayStart - lightCenter.x - padding + posCfg.offsetX
+                    panelY1 = 256 - vGap / 2 - radius - padding + posCfg.offsetY
+                    panelX2 = lightArrayStart + lightWidth * (lightCount - 1) + lightCenter.x + padding + posCfg.offsetX
+                    panelY2 = 256 + vGap / 2 + radius + padding + posCfg.offsetY
+                else
+                    dragging = false
+                end
+            end
+        end
+    end
 
     -- Carcasa del semáforo
     ui.drawRectFilled(vec2(panelX1, panelY1), vec2(panelX2, panelY2), rgbm(0.03, 0.03, 0.03, 0.92), 14)
@@ -330,7 +375,7 @@ function script.drawUI() -- Panel tipo gantry F1
             isLit = isLit and blinkOn
         end
 
-        local center = vec2(cx, 256)
+        local center = vec2(cx + posCfg.offsetX, 256 + posCfg.offsetY)
 
         -- Portalámpara (bezel oscuro)
         ui.drawCircleFilled(center, radius + 6, rgbm(0.10, 0.10, 0.10, 1), 32)
@@ -349,4 +394,3 @@ function script.drawUI() -- Panel tipo gantry F1
         end
     end
 end
-
