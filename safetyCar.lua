@@ -43,17 +43,39 @@ local uiInputLogged = false
 local function logUIInputFunctions()
     if uiInputLogged then return end
     uiInputLogged = true
-    pcall(function()
-        local names = {}
-        for k, v in pairs(ui) do
-            local kl = tostring(k):lower()
-            if kl:find("mouse") or kl:find("key") or kl:find("drag") or kl:find("window") then
-                table.insert(names, tostring(k))
-            end
+
+    local candidates = {
+        "mouseDown", "mouseDragging", "mouseDelta", "mouseClicked", "mouseReleased",
+        "mousePos", "mouseWheel", "isMouseDown", "isMouseDragging", "isMouseClicked",
+        "keyDown", "keyboardButtonDown", "isKeyDown", "isKeyPressed", "ctrlDown",
+        "isWindowHovered", "isWindowFocused", "isItemHovered", "isItemActive",
+        "windowPos", "setWindowPos", "getWindowPos"
+    }
+
+    local found = {}
+    local missing = {}
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return ui[name] end)
+        if ok and val ~= nil then
+            table.insert(found, name)
+        else
+            table.insert(missing, name)
         end
-        table.sort(names)
-        ac.log("[SAFETYCAR] Funciones ui de mouse/teclado/drag/window disponibles: " .. table.concat(names, ", "))
+    end
+
+    ac.log("[SAFETYCAR] ui.* ENCONTRADAS: " .. table.concat(found, ", "))
+    ac.log("[SAFETYCAR] ui.* NO encontradas: " .. table.concat(missing, ", "))
+
+    local okPairs, errPairs = pcall(function()
+        local count = 0
+        for k, v in pairs(ui) do
+            count = count + 1
+        end
+        ac.log("[SAFETYCAR] pairs(ui) funcionó, cantidad de entradas: " .. count)
     end)
+    if not okPairs then
+        ac.log("[SAFETYCAR] pairs(ui) falló: " .. tostring(errPairs))
+    end
 end
 
 ac.onOnlineWelcome(function(message, config)
