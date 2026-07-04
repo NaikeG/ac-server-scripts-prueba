@@ -6,6 +6,15 @@ local totalLapsField = nil
 local totalLapsFieldSource = nil -- "sim", "car" o "config"
 local configLapsValue = nil
 local function findTotalLapsField(config)
+    -- Opción manual (la más confiable): el admin indica la cantidad de vueltas en Extra Options
+    local ok, manualVal = pcall(function() return config:get("ANNOUNCE", "TOTAL_LAPS", 0) end)
+    if ok and type(manualVal) == "number" and manualVal > 0 then
+        ac.log("[ANNOUNCE] Vueltas totales configuradas manualmente: " .. tostring(manualVal))
+        totalLapsFieldSource = "config"
+        configLapsValue = manualVal
+        return
+    end
+
     local simCandidates = { "raceLaps", "sessionLapsCount", "numberOfLaps", "lapsCount", "totalLaps", "sessionLaps", "raceLapsCount", "lapsTotal", "totalLapsCount" }
     for _, name in ipairs(simCandidates) do
         local ok, val = pcall(function() return sim[name] end)
@@ -26,20 +35,7 @@ local function findTotalLapsField(config)
             return
         end
     end
-    -- Alternativa: leer LAPS directo de la config de la sesión (server_cfg.ini)
-    local configSections = { "RACE", "SESSION_0", "SESSION_1", "SESSION_2", "SESSION_3" }
-    for _, section in ipairs(configSections) do
-        local ok, val = pcall(function() return config:get(section, "LAPS", 0) end)
-        if ok and type(val) == "number" and val > 0 then
-            ac.log("[ANNOUNCE] Vueltas totales encontradas en config [" .. section .. "] LAPS = " .. tostring(val))
-            totalLapsField = "CONFIG_LAPS_" .. tostring(val)
-            totalLapsFieldSource = "config"
-            configLapsValue = val
-            return
-        end
-    end
-
-    ac.log("[ANNOUNCE] No se encontró campo de vueltas totales -> el anuncio de ganador queda desactivado (el de vuelta rápida sigue funcionando igual)")
+    ac.log("[ANNOUNCE] No se encontró campo de vueltas totales (ni automático ni TOTAL_LAPS manual) -> el anuncio de ganador queda desactivado (el de vuelta rápida sigue funcionando igual)")
 
     local okPairs, errPairs = pcall(function()
         local names = {}
