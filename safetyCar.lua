@@ -39,6 +39,23 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
+local uiInputLogged = false
+local function logUIInputFunctions()
+    if uiInputLogged then return end
+    uiInputLogged = true
+    pcall(function()
+        local names = {}
+        for k, v in pairs(ui) do
+            local kl = tostring(k):lower()
+            if kl:find("mouse") or kl:find("key") or kl:find("drag") or kl:find("window") then
+                table.insert(names, tostring(k))
+            end
+        end
+        table.sort(names)
+        ac.log("[SAFETYCAR] Funciones ui de mouse/teclado/drag/window disponibles: " .. table.concat(names, ", "))
+    end)
+end
+
 ac.onOnlineWelcome(function(message, config)
     if config:get("SAFETYCAR", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
@@ -73,6 +90,8 @@ ac.onOnlineWelcome(function(message, config)
         end,
         adminFlag
     )
+
+    logUIInputFunctions()
 end)
 
 function script.update(dt)
@@ -168,4 +187,3 @@ function script.drawUI()
         drawContent(cfg.posX * screen.w, cfg.posY * screen.h)
     end
 end
-
