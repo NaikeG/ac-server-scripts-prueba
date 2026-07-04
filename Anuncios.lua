@@ -5,17 +5,40 @@ car = ac.getCar(0)
 local totalLapsField = nil
 local totalLapsFieldSource = nil -- "sim" o "car"
 local function findTotalLapsField()
-    local simCandidates = { "raceLaps", "sessionLapsCount", "numberOfLaps", "lapsCount", "totalLaps" }
+    local simCandidates = { "raceLaps", "sessionLapsCount", "numberOfLaps", "lapsCount", "totalLaps", "sessionLaps", "raceLapsCount", "lapsTotal", "totalLapsCount" }
     for _, name in ipairs(simCandidates) do
         local ok, val = pcall(function() return sim[name] end)
-        if ok and type(val) == "number" and val > 0 then
+        if ok and type(val) == "number" then
             ac.log("[ANNOUNCE] Campo de vueltas totales encontrado: sim." .. name .. " = " .. tostring(val))
             totalLapsField = name
             totalLapsFieldSource = "sim"
             return
         end
     end
+    local carCandidates = { "lapsTotal", "totalLaps", "racelapsCount", "lapsToDo" }
+    for _, name in ipairs(carCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "number" then
+            ac.log("[ANNOUNCE] Campo de vueltas totales encontrado: car." .. name .. " = " .. tostring(val))
+            totalLapsField = name
+            totalLapsFieldSource = "car"
+            return
+        end
+    end
     ac.log("[ANNOUNCE] No se encontró campo de vueltas totales -> el anuncio de ganador queda desactivado (el de vuelta rápida sigue funcionando igual)")
+
+    local okPairs, errPairs = pcall(function()
+        local names = {}
+        for k, v in pairs(sim) do
+            if tostring(k):lower():find("lap") then
+                table.insert(names, tostring(k) .. "=" .. tostring(v))
+            end
+        end
+        ac.log("[ANNOUNCE] Campos de sim con 'lap' en el nombre: " .. table.concat(names, ", "))
+    end)
+    if not okPairs then
+        ac.log("[ANNOUNCE] No se pudo enumerar sim: " .. tostring(errPairs))
+    end
 end
 
 local function getTotalLaps()
@@ -65,7 +88,7 @@ local function findLapTimeField()
     local candidates = { "lastLap", "lastLapTimeMs", "lastLapTime", "previousLapTimeMs", "bestLap" }
     for _, name in ipairs(candidates) do
         local ok, val = pcall(function() return car[name] end)
-        if ok and type(val) == "number" and val > 0 then
+        if ok and type(val) == "number" then
             ac.log("[ANNOUNCE] Campo de tiempo de vuelta encontrado: car." .. name .. " = " .. tostring(val))
             lapTimeField = name
             return
