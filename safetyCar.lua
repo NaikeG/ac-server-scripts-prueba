@@ -39,45 +39,6 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
-local uiInputLogged = false
-local function logUIInputFunctions()
-    if uiInputLogged then return end
-    uiInputLogged = true
-
-    local candidates = {
-        "mouseDown", "mouseDragging", "mouseDelta", "mouseClicked", "mouseReleased",
-        "mousePos", "mouseWheel", "isMouseDown", "isMouseDragging", "isMouseClicked",
-        "keyDown", "keyboardButtonDown", "isKeyDown", "isKeyPressed", "ctrlDown",
-        "isWindowHovered", "isWindowFocused", "isItemHovered", "isItemActive",
-        "windowPos", "setWindowPos", "getWindowPos"
-    }
-
-    local found = {}
-    local missing = {}
-    for _, name in ipairs(candidates) do
-        local ok, val = pcall(function() return ui[name] end)
-        if ok and val ~= nil then
-            table.insert(found, name)
-        else
-            table.insert(missing, name)
-        end
-    end
-
-    ac.log("[SAFETYCAR] ui.* ENCONTRADAS: " .. table.concat(found, ", "))
-    ac.log("[SAFETYCAR] ui.* NO encontradas: " .. table.concat(missing, ", "))
-
-    local okPairs, errPairs = pcall(function()
-        local count = 0
-        for k, v in pairs(ui) do
-            count = count + 1
-        end
-        ac.log("[SAFETYCAR] pairs(ui) funcionó, cantidad de entradas: " .. count)
-    end)
-    if not okPairs then
-        ac.log("[SAFETYCAR] pairs(ui) falló: " .. tostring(errPairs))
-    end
-end
-
 ac.onOnlineWelcome(function(message, config)
     if config:get("SAFETYCAR", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
@@ -112,8 +73,6 @@ ac.onOnlineWelcome(function(message, config)
         end,
         adminFlag
     )
-
-    logUIInputFunctions()
 end)
 
 function script.update(dt)
@@ -173,39 +132,83 @@ local function drawContent(originX, originY)
     return boxWidth, blackHeight + yellowHeight
 end
 
+-- ===== Arrastre manual con Ctrl + Click (igual gesto que las apps tipo Real Penalty) =====
+
+local ctrlKeyIndex = nil
+local function findCtrlKeyIndex()
+    local candidates = { "LeftControl", "LCtrl", "Control", "Ctrl", "LeftCtrl", "ControlLeft", "LControl" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return ui.KeyIndex[name] end)
+        if ok and val ~= nil then
+            ac.log("[SAFETYCAR] Ctrl encontrado como ui.KeyIndex." .. name)
+            return val
+        end
+    end
+    ac.log("[SAFETYCAR] No se encontró ninguna variante de Ctrl en ui.KeyIndex")
+    return nil
+end
+
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+local function isCtrlDown()
+    if not ctrlKeyIndex then return false end
+    local ok, val = pcall(function() return ui.keyboardButtonDown(ctrlKeyIndex) end)
+    if ok then return val end
+    return false
+end
+
 -- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
 local cfg = ac.storage({
-    posX = 552 / 1920,  -- guardado como proporción de pantalla, no en píxeles fijos
+    posX = 552 / 1920,  -- proporción de pantalla, no píxeles fijos
     posY = 213 / 1080
 })
 
-local movableFailed = false
+local dragging = false
+local dragOffsetX, dragOffsetY = 0, 0
+local boxW, boxH = 150, 150
 
 function script.drawUI()
     if state.alpha <= 0 then
         return
     end
 
-    if not movableFailed then
-        local ok, err = pcall(function()
-            local ret1, ret2 = ui.transparentWindow("safetyCarSignWindow", vec2(cfg.posX * screen.w, cfg.posY * screen.h), vec2(150, 150), function()
-                drawContent(0, 0)
-            end)
-            -- Si la función devuelve la posición actual de la ventana, la guardamos para la próxima sesión
-            for _, ret in ipairs({ ret1, ret2 }) do
-                if type(ret) == "userdata" and ret.x ~= nil and ret.y ~= nil then
-                    cfg.posX = ret.x / screen.w
-                    cfg.posY = ret.y / screen.h
-                end
+    local boxX = cfg.posX * screen.w
+    local boxY = cfg.posY * screen.h
+
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
+    if mp ~= nil then
+        local overBox = mp.x >= boxX and mp.x <= boxX + boxW and mp.y >= boxY and mp.y <= boxY + boxH
+
+        if not dragging and mouseIsDown and overBox then
+            dragging = true
+            dragOffsetX = mp.x - boxX
+            dragOffsetY = mp.y - boxY
+        end
+
+        if dragging then
+            if mouseIsDown then
+                boxX = mp.x - dragOffsetX
+                boxY = mp.y - dragOffsetY
+                cfg.posX = boxX / screen.w
+                cfg.posY = boxY / screen.h
+            else
+                dragging = false
             end
-        end)
-        if not ok then
-            movableFailed = true
-            ac.log("[SAFETYCAR] ERROR con ventana movible (se usa posición fija de respaldo): " .. tostring(err))
         end
     end
 
-    if movableFailed then
-        drawContent(cfg.posX * screen.w, cfg.posY * screen.h)
-    end
+    boxW, boxH = drawContent(boxX, boxY)
 end
+
