@@ -23,6 +23,7 @@ local isf1style = 0
 local f1delay = 100
 
 local greenHoldTime = 1000 -- ms que se mantienen las luces en verde tras la largada, antes de apagarse
+local maxStartArmWindow = 300000 -- ms: solo se arma el chequeo de falsa largada si la sesión lleva menos de esto (evita teleports random tarde en la carrera)
 
 -- Colores "flúor" (valores por encima de 1 generan un leve glow/bloom en CSP)
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
@@ -93,6 +94,7 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     seqDuration, seqStartTime = config:get("STARTLIGHTS", "SEQUENCE_LENGTH", 17) * 1000, config:get("STARTLIGHTS", "SEQUENCE_START", 12) * 1000
     isf1style = config:get("STARTLIGHTS", "F1_STYLE", 0)
     f1delay = config:get("STARTLIGHTS", "F1_STYLE_DELAY", 50)
+    maxStartArmWindow = config:get("STARTLIGHTS", "MAX_START_ARM_WINDOW", 300) * 1000
     greenHoldTime = config:get("STARTLIGHTS", "GREEN_HOLD_TIME", 1) * 1000
     if config:get("STARTLIGHTS", "ADMIN_ONLY", 1) == 1 then
         adminFlag = ui.OnlineExtraFlags.Admin
@@ -224,7 +226,13 @@ triggerStart = ac.OnlineEvent({
 }, function(sender, message)
     startTime = message.startTime
     delayTime = message.delayTime
-    started = false
+    if sim.currentSessionTime < maxStartArmWindow then
+        started = false
+    else
+        ac.log("[STARTLIGHTS] Falsa largada NO armada: la sesión ya lleva " ..
+            math.floor(sim.currentSessionTime / 1000) .. "s (fuera de la ventana de seguridad de " ..
+            math.floor(maxStartArmWindow / 1000) .. "s). Las luces igual se muestran, pero sin riesgo de teletransporte.")
+    end
     greenSoundPlayed = false
     for i = 1, lightCount, 1 do
         prevLightState[i] = false
