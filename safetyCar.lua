@@ -99,16 +99,12 @@ local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
 end
 
-function script.drawUI()
-    if state.alpha <= 0 then
-        return
-    end
-
+local function drawContent(originX, originY)
     local boxWidth = 150
     local blackHeight = 70
     local yellowHeight = 80
-    local x = screen.w * (552 / 1920)
-    local y = screen.h * (213 / 1080)
+    local x = originX
+    local y = originY
 
     -- Caja negra con "SC"
     ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), alphaColor(0.05, 0.05, 0.05, 1))
@@ -132,4 +128,44 @@ function script.drawUI()
         ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + yellowHeight), alphaColor(0.12, 0.10, 0.02, 1))
     end
     ui.drawRect(vec2(x, barY), vec2(x + boxWidth, barY + yellowHeight), alphaColor(0.25, 0.25, 0.25, 1), 0, 0, 2)
+
+    return boxWidth, blackHeight + yellowHeight
 end
+
+-- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
+local cfg = ac.storage({
+    posX = 552 / 1920,  -- guardado como proporción de pantalla, no en píxeles fijos
+    posY = 213 / 1080
+})
+
+local movableFailed = false
+
+function script.drawUI()
+    if state.alpha <= 0 then
+        return
+    end
+
+    if not movableFailed then
+        local ok, err = pcall(function()
+            local ret1, ret2 = ui.transparentWindow("safetyCarSignWindow", vec2(cfg.posX * screen.w, cfg.posY * screen.h), vec2(150, 150), function()
+                drawContent(0, 0)
+            end)
+            -- Si la función devuelve la posición actual de la ventana, la guardamos para la próxima sesión
+            for _, ret in ipairs({ ret1, ret2 }) do
+                if type(ret) == "userdata" and ret.x ~= nil and ret.y ~= nil then
+                    cfg.posX = ret.x / screen.w
+                    cfg.posY = ret.y / screen.h
+                end
+            end
+        end)
+        if not ok then
+            movableFailed = true
+            ac.log("[SAFETYCAR] ERROR con ventana movible (se usa posición fija de respaldo): " .. tostring(err))
+        end
+    end
+
+    if movableFailed then
+        drawContent(cfg.posX * screen.w, cfg.posY * screen.h)
+    end
+end
+
