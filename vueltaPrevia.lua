@@ -128,15 +128,69 @@ local function drawGantry(centerX, y)
     end
 end
 
+
+-- ===== Arrastre manual con click sostenido =====
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+-- Posición guardada por el usuario (persiste entre sesiones, individual por piloto)
+local cfg = ac.storage({
+    posX = 0.5,      -- proporción de pantalla (centro horizontal del conjunto)
+    posY = 90 / 1080  -- proporción de pantalla (borde superior del conjunto)
+})
+
+local dragging = false
+local dragOffsetX, dragOffsetY = 0, 0
+local blockWidth, blockHeight = 420, 226
+
 function script.drawUI()
     if state.alpha <= 0 then
         return
     end
 
-    local centerX = screen.w * 0.5
-    local panelY = 90
     local panelHeight = 110
+    local centerX = cfg.posX * screen.w
+    local panelY = cfg.posY * screen.h
     local gantryY = panelY + panelHeight + 20
+
+    local blockX = centerX - blockWidth * 0.5
+    local blockY = panelY
+
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
+    if mp ~= nil then
+        local overBlock = mp.x >= blockX and mp.x <= blockX + blockWidth and mp.y >= blockY and mp.y <= blockY + blockHeight
+
+        if not dragging and mouseIsDown and overBlock then
+            dragging = true
+            dragOffsetX = mp.x - blockX
+            dragOffsetY = mp.y - blockY
+        end
+
+        if dragging then
+            if mouseIsDown then
+                blockX = mp.x - dragOffsetX
+                blockY = mp.y - dragOffsetY
+                centerX = blockX + blockWidth * 0.5
+                panelY = blockY
+                gantryY = panelY + panelHeight + 20
+                cfg.posX = centerX / screen.w
+                cfg.posY = panelY / screen.h
+            else
+                dragging = false
+            end
+        end
+    end
 
     drawInfoPanel(centerX, panelY)
     drawGantry(centerX, gantryY)
