@@ -10,7 +10,7 @@ local state = {
 -- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
 -- IMPORTANTE: escala 0-100 (porcentaje), NO 0-1. Ej: 80 = 80% de restricción.
 local restrictorValue = 80
-local maxThrottle = 0.15 -- tope forzado del acelerador (0 = no acelera nada, 1 = sin límite)
+local ballastValue = 150 -- kg extra que se le suman al auto mientras el SC está afuera
 
 local function applyRestrictor(value)
     local ok, err = pcall(function() physics.setCarRestrictor(0, value) end)
@@ -24,45 +24,35 @@ local function applyRestrictor(value)
     return ok
 end
 
-local throttleFieldLogged = false
-
-local function applyThrottleCap(dt)
-    local ok, currentGas = pcall(function() return car.gas end)
-    local fieldUsed = "gas"
-    if not ok then
-        ok, currentGas = pcall(function() return car.throttle end)
-        fieldUsed = "throttle"
+local function applyBallast(value)
+    local ok, err = pcall(function() physics.setCarBallast(0, value) end)
+    if ok then
+        local okRead, currentVal = pcall(function() return car.ballast end)
+        ac.log("[SAFETYCAR] Ballast aplicado con éxito (valor pedido: " .. tostring(value) ..
+            " kg, car.ballast ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
+    else
+        ac.log("[SAFETYCAR] ERROR aplicando ballast: " .. tostring(err))
     end
-
-    if not throttleFieldLogged then
-        throttleFieldLogged = true
-        ac.log("[SAFETYCAR] Campo de acelerador usado: car." .. fieldUsed .. " = " .. tostring(currentGas))
-    end
-
-    -- Si no pisás más que el límite (soltaste o estás frenando), no se toca nada
-    if not ok or currentGas == nil or currentGas <= maxThrottle then
-        return
-    end
-
-    local okForce, err = pcall(function()
-        physics.forceUserThrottleFor(0.15, maxThrottle)
-    end)
-    if not okForce then
-        ac.log("[SAFETYCAR] ERROR con forceUserThrottleFor: " .. tostring(err))
-    end
+    return ok
 end
 
 local function applyRestrictorQuiet(value)
     pcall(function() physics.setCarRestrictor(0, value) end)
 end
 
+local function applyBallastQuiet(value)
+    pcall(function() physics.setCarBallast(0, value) end)
+end
+
 local function onSafetyCarStateChanged()
     if state.enabled then
         applyRestrictor(restrictorValue)
-        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " maxThrottle=" .. tostring(maxThrottle))
+        applyBallast(ballastValue)
+        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " ballast=" .. tostring(ballastValue))
     else
         applyRestrictor(0)
-        ac.log("[SAFETYCAR] Desactivado, potencia normal restaurada")
+        applyBallast(0)
+        ac.log("[SAFETYCAR] Desactivado, potencia y peso normales restaurados")
     end
 end
 
@@ -108,7 +98,7 @@ ac.onOnlineWelcome(function(message, config)
     end
 
     restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 80)
-    maxThrottle = config:get("SAFETYCAR", "MAX_THROTTLE", 0.15)
+    ballastValue = config:get("SAFETYCAR", "BALLAST_VALUE", 150)
 
     activateURL = config:get("SAFETYCAR", "SOUND_ACTIVATE_URL", "")
     soundVolumeMultiplier = config:get("SAFETYCAR", "SOUND_VOLUME_MULTIPLIER", 2.5)
@@ -145,7 +135,7 @@ function script.update(dt)
     if state.enabled then
         state.alpha = math.min(state.alpha + dt * speed, 1)
         applyRestrictorQuiet(restrictorValue)
-        applyThrottleCap(dt)
+        applyBallastQuiet(ballastValue)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
@@ -285,3 +275,4 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
+
