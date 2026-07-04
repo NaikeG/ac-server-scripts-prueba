@@ -143,11 +143,10 @@ ac.onResolutionChange(function()
 end)
 
 local banner = { text = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
+local bannerQueue = {}
 
 local function showBanner(text, color, duration)
-    banner.text = text
-    banner.color = color
-    banner.timer = duration or 5
+    table.insert(bannerQueue, { text = text, color = color, duration = duration or 5 })
 end
 
 function script.drawUI()
@@ -182,6 +181,11 @@ end
 function script.update(dt)
     if banner.timer > 0 then
         banner.timer = banner.timer - dt
+    elseif #bannerQueue > 0 then
+        local next_ = table.remove(bannerQueue, 1)
+        banner.text = next_.text
+        banner.color = next_.color
+        banner.timer = next_.duration
     end
 
     if prevLapCount == nil then
