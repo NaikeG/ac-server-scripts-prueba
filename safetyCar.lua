@@ -106,9 +106,9 @@ function script.drawUI()
 
     local boxWidth = 150
     local blackHeight = 70
-    local yellowHeight = 55
-    local x = 20
-    local y = 230
+    local yellowHeight = 80
+    local x = screen.w * (552 / 1920)
+    local y = screen.h * (213 / 1080)
 
     -- Caja negra con "SC"
     ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), alphaColor(0.05, 0.05, 0.05, 1))
