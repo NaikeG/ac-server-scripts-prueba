@@ -8,43 +8,41 @@ local state = {
 }
 
 -- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
-local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima. Reduce la potencia del motor mientras el SC está afuera.
+local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima (reduce potencia del motor)
+local slowDownValue = 1.0   -- intensidad del tope de velocidad tipo "corte de curva" (a ajustar según se sienta en el juego)
 
-local function applyRestrictor(value)
-    local attempts = {}
-    table.insert(attempts, function() physics.setCarRestrictor(0, value) end)
-    table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.SlowDown, value) end)
-
-    for _, fn in ipairs(attempts) do
-        local ok, err = pcall(fn)
-        if ok then
-            local okRead, currentVal = pcall(function() return car.restrictor end)
-            ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor pedido: " .. tostring(value) ..
-                ", car.restrictor ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
-            return true
-        else
-            ac.log("[SAFETYCAR] Intento fallido: " .. tostring(err))
-        end
+local function applyRestrictor(value, slowValue)
+    local restrictorOk, restrictorErr = pcall(function() physics.setCarRestrictor(0, value) end)
+    if restrictorOk then
+        local okRead, currentVal = pcall(function() return car.restrictor end)
+        ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor pedido: " .. tostring(value) ..
+            ", car.restrictor ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
+    else
+        ac.log("[SAFETYCAR] ERROR aplicando restrictor: " .. tostring(restrictorErr))
     end
 
-    ac.log("[SAFETYCAR] Ninguna función de restrictor funcionó, no se pudo reducir potencia")
-    return false
+    local slowOk, slowErr = pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, slowValue) end)
+    if slowOk then
+        ac.log("[SAFETYCAR] SlowDown aplicado con éxito (valor pedido: " .. tostring(slowValue) .. ")")
+    else
+        ac.log("[SAFETYCAR] ERROR aplicando SlowDown: " .. tostring(slowErr))
+    end
+
+    return restrictorOk or slowOk
 end
 
-local function applyRestrictorQuiet(value)
-    local ok = pcall(function() physics.setCarRestrictor(0, value) end)
-    if not ok then
-        pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, value) end)
-    end
+local function applyRestrictorQuiet(value, slowValue)
+    pcall(function() physics.setCarRestrictor(0, value) end)
+    pcall(function() physics.setCarPenalty(ac.PenaltyType.SlowDown, slowValue) end)
 end
 
 local function onSafetyCarStateChanged()
     if state.enabled then
-        applyRestrictor(restrictorValue)
-        ac.log("[SAFETYCAR] Restrictor aplicado (potencia reducida): " .. tostring(restrictorValue))
+        applyRestrictor(restrictorValue, slowDownValue)
+        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " slowDown=" .. tostring(slowDownValue))
     else
-        applyRestrictor(0)
-        ac.log("[SAFETYCAR] Restrictor removido, potencia normal restaurada")
+        applyRestrictor(0, 0)
+        ac.log("[SAFETYCAR] Desactivado, potencia normal restaurada")
     end
 end
 
@@ -90,6 +88,7 @@ ac.onOnlineWelcome(function(message, config)
     end
 
     restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 0.5)
+    slowDownValue = config:get("SAFETYCAR", "SLOWDOWN_VALUE", 1.0)
 
     activateURL = config:get("SAFETYCAR", "SOUND_ACTIVATE_URL", "")
     soundVolumeMultiplier = config:get("SAFETYCAR", "SOUND_VOLUME_MULTIPLIER", 2.5)
@@ -125,7 +124,7 @@ function script.update(dt)
     local speed = 3.5
     if state.enabled then
         state.alpha = math.min(state.alpha + dt * speed, 1)
-        applyRestrictorQuiet(restrictorValue)
+        applyRestrictorQuiet(restrictorValue, slowDownValue)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
