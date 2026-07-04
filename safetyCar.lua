@@ -12,18 +12,18 @@ local restrictorValue = 0.5 -- 0 = sin restricción, 1 = restricción máxima. R
 
 local function applyRestrictor(value)
     local attempts = {}
-    if ac.PenaltyType.Restrictor ~= nil then
-        table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.Restrictor, value) end)
-    end
-    if ac.PenaltyType.EngineRestrictor ~= nil then
-        table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.EngineRestrictor, value) end)
-    end
+    table.insert(attempts, function() physics.setCarPenalty(ac.PenaltyType.SlowDown, value) end)
     table.insert(attempts, function() ac.setCarRestrictor(0, value) end)
     table.insert(attempts, function() physics.setExtraRestrictor(value) end)
 
     for _, fn in ipairs(attempts) do
-        local ok = pcall(fn)
-        if ok then return true end
+        local ok, err = pcall(fn)
+        if ok then
+            ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor: " .. tostring(value) .. ")")
+            return true
+        else
+            ac.log("[SAFETYCAR] Intento fallido: " .. tostring(err))
+        end
     end
 
     ac.log("[SAFETYCAR] Ninguna función de restrictor funcionó, no se pudo reducir potencia")
@@ -256,3 +256,4 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
+
