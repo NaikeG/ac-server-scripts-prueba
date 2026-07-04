@@ -141,9 +141,23 @@ function script.update(dt)
         return
     end
 
+    -- Chequeo de fin de carrera: se evalúa cada frame, no solo al completar una vuelta,
+    -- por si el teletransporte a pits al terminar la sesión corta la ejecución justo
+    -- en el frame donde se incrementa el contador de vueltas.
+    local totalLaps = getTotalLaps()
+    if totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
+        winnerAnnounced = true
+        ac.sendChatMessage("🏆 " .. car:driverName() .. " ha ganado la carrera!")
+        ac.log("[ANNOUNCE] GANADOR detectado: " .. car:driverName() .. " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
+        raceFinishedEvent({})
+    end
+
     if car.lapCount > prevLapCount then
         local completedLap = prevLapCount + 1
         prevLapCount = car.lapCount
+
+        ac.log("[ANNOUNCE] Vuelta completada: " .. completedLap .. " | car.lapCount=" .. car.lapCount ..
+            " | totalLaps=" .. tostring(totalLaps) .. " | winnerAnnounced=" .. tostring(winnerAnnounced))
 
         -- La vuelta 1 incluye la salida (no es representativa como "vuelta rápida")
         if completedLap >= 2 then
@@ -157,14 +171,6 @@ function script.update(dt)
                     lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
                 end
             end
-        end
-
-        -- Chequeo de fin de carrera
-        local totalLaps = getTotalLaps()
-        if totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
-            winnerAnnounced = true
-            ac.sendChatMessage("🏆 " .. car:driverName() .. " ha ganado la carrera!")
-            raceFinishedEvent({})
         end
     end
 end
