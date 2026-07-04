@@ -134,7 +134,39 @@ ac.onOnlineWelcome(function(message, config)
         end
     end
 
-    ui.registerOnlineExtra(
+local function startSequence()
+    local st = sim.currentSessionTime + seqDuration
+    local dt = math.random(lightsOutMin, lightsOutMax)
+    phase = "sequence"
+    startTime = st
+    delayTime = dt
+    overSpeedFlag = false
+    greenCheckDone = false
+    resetLightEdges()
+    rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
+    ac.log("[ROLLINGSTART] Secuencia iniciada -> fase: sequence")
+end
+
+local lineCrossingHooked = false
+local function hookLineCrossing()
+    if lineCrossingHooked then return end
+    lineCrossingHooked = true
+    local ok, err = pcall(function()
+        ac.onTrackPointCrossed(0, 0, function()
+            if phase == "yellow" then
+                ac.log("[ROLLINGSTART] Línea de meta cruzada, iniciando secuencia automáticamente")
+                startSequence()
+            end
+        end)
+    end)
+    if ok then
+        ac.log("[ROLLINGSTART] Detección de cruce de línea activada (ac.onTrackPointCrossed)")
+    else
+        ac.log("[ROLLINGSTART] ERROR activando detección de cruce de línea: " .. tostring(err))
+    end
+end
+
+ui.registerOnlineExtra(
         ui.Icons.Warning,
         "🚦 Largada en Movimiento",
         function() return true end,
@@ -145,15 +177,7 @@ ac.onOnlineWelcome(function(message, config)
                 resetLightEdges()
                 rollingStartEvent({ phase = 1, startTime = 0, delayTime = 0 })
             elseif phase == "yellow" then
-                local st = sim.currentSessionTime + seqDuration
-                local dt = math.random(lightsOutMin, lightsOutMax)
-                phase = "sequence"
-                startTime = st
-                delayTime = dt
-                overSpeedFlag = false
-                greenCheckDone = false
-                resetLightEdges()
-                rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
+                startSequence()
             else
                 -- Ya en secuencia: cancelar y volver a apagado
                 phase = "off"
@@ -167,6 +191,7 @@ ac.onOnlineWelcome(function(message, config)
     )
 
     logAvailablePenaltyTypes()
+    hookLineCrossing()
 end)
 
 local function applyRestrictor(value)
@@ -351,7 +376,7 @@ local function drawInfoPanel(centerX, y)
 
     local subtitle
     if phase == "yellow" then
-        subtitle = "VELOCIDAD LIBRE   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
+        subtitle = "RESPETAR POSICIONES"
     else
         subtitle = "MÁXIMO " .. maxSpeed .. " KM/H   |   ACTUAL " .. math.round(car.speedKmh, 0) .. " KM/H"
     end
