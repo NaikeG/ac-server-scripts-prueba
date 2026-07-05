@@ -149,7 +149,19 @@ local function showBanner(text, color, duration)
     table.insert(bannerQueue, { text = text, color = color, duration = duration or 5 })
 end
 
+local pendingAnnouncements = {}
+
 function script.drawUI()
+    -- Los anuncios (chat + cartel) se disparan acá y no en script.update, porque
+    -- drawUI solo se ejecuta donde hay pantalla (el cliente), nunca en la copia
+    -- headless que corre en el servidor. Así se evita que el mismo aviso se
+    -- mande dos veces (una desde cada copia del script).
+    for _, item in ipairs(pendingAnnouncements) do
+        ac.sendChatMessage(item.chatMsg)
+        showBanner(item.bannerMsg, item.color, item.duration)
+    end
+    pendingAnnouncements = {}
+
     if banner.timer > 0 then
         banner.alpha = math.min(banner.alpha + 0.08, 1)
     else
@@ -210,8 +222,7 @@ function script.update(dt)
     if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
         winnerAnnounced = true
         local msg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
-        ac.sendChatMessage(msg)
-        showBanner(msg, rgbm(1.0, 0.82, 0.0, 1), 6)
+        table.insert(pendingAnnouncements, { chatMsg = msg, bannerMsg = msg, color = rgbm(1.0, 0.82, 0.0, 1), duration = 6 })
         ac.log("[ANNOUNCE] GANADOR detectado: " .. car:driverName() .. " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
         raceFinishedEvent({})
     end
@@ -232,8 +243,7 @@ function script.update(dt)
                     bestLapTimeMs = lapTimeMs
                     bestLapDriver = car:driverName()
                     local msg = "⏱️ NUEVA VUELTA RÁPIDA: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
-                    ac.sendChatMessage(msg)
-                    showBanner(msg, rgbm(0.2, 0.8, 1.0, 1), 5)
+                    table.insert(pendingAnnouncements, { chatMsg = msg, bannerMsg = msg, color = rgbm(0.2, 0.8, 1.0, 1), duration = 5 })
                     lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
                 end
             end
