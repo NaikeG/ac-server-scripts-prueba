@@ -1,6 +1,8 @@
 sim = ac.getSim()
 car = ac.getCar(0)
 
+local pendingAnnouncements = {}
+
 -- ===== Diagnóstico: encontrar el campo de "cantidad total de vueltas de la carrera" =====
 local totalLapsField = nil
 local totalLapsFieldSource = nil -- "sim", "car" o "config"
@@ -68,10 +70,19 @@ lapCompletedEvent = ac.OnlineEvent({
     lapTimeMs = ac.StructItem.float(),
     lapNumber = ac.StructItem.float()
 }, function(sender, message)
-    -- Solo actualiza el registro local; el anuncio lo hace quien marcó la vuelta (ver script.update)
+    -- Actualiza el registro local y le muestra el cartel a TODOS (el que hizo la vuelta
+    -- ya ve el suyo propio desde script.update; esto es para el resto de los pilotos).
     if bestLapTimeMs == nil or message.lapTimeMs < bestLapTimeMs then
         bestLapTimeMs = message.lapTimeMs
         bestLapDriver = sender:driverName()
+        table.insert(pendingAnnouncements, {
+            chatMsg = nil, -- el chat ya lo mandó el que hizo la vuelta
+            label = "VUELTA MÁS RÁPIDA",
+            value = sender:driverName() .. "  " .. msToTimeString(message.lapTimeMs),
+            icon = "⏱️",
+            color = rgbm(0.2, 0.8, 1.0, 1),
+            duration = 6
+        })
     end
 end,
 ac.SharedNamespace.ServerScript)
@@ -82,6 +93,14 @@ raceFinishedEvent = ac.OnlineEvent({
 }, function(sender, message)
     if not winnerAnnounced then
         winnerAnnounced = true
+        table.insert(pendingAnnouncements, {
+            chatMsg = nil, -- el chat ya lo mandó el ganador
+            label = "GANADOR DE LA CARRERA",
+            value = sender:driverName(),
+            icon = "🏆",
+            color = rgbm(1.0, 0.78, 0.05, 1),
+            duration = 7
+        })
         ac.log("[ANNOUNCE] Ganador registrado: " .. sender:driverName())
     end
 end,
@@ -149,15 +168,15 @@ local function showBanner(label, value, icon, color, duration)
     table.insert(bannerQueue, { label = label, value = value, icon = icon, color = color, duration = duration or 5 })
 end
 
-local pendingAnnouncements = {}
-
 function script.drawUI()
     -- Los anuncios (chat + cartel) se disparan acá y no en script.update, porque
     -- drawUI solo se ejecuta donde hay pantalla (el cliente), nunca en la copia
     -- headless que corre en el servidor. Así se evita que el mismo aviso se
     -- mande dos veces (una desde cada copia del script).
     for _, item in ipairs(pendingAnnouncements) do
-        ac.sendChatMessage(item.chatMsg)
+        if item.chatMsg then
+            ac.sendChatMessage(item.chatMsg)
+        end
         showBanner(item.label, item.value, item.icon, item.color, item.duration)
     end
     pendingAnnouncements = {}
@@ -269,7 +288,7 @@ function script.update(dt)
                     local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
                     table.insert(pendingAnnouncements, {
                         chatMsg = chatMsg,
-                        label = "NUEVA VUELTA RÁPIDA",
+                        label = "VUELTA MÁS RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
                         icon = "⏱️",
                         color = rgbm(0.2, 0.8, 1.0, 1), -- celeste
