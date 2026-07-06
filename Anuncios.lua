@@ -142,11 +142,11 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
-local banner = { text = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
+local banner = { label = "", value = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
 local bannerQueue = {}
 
-local function showBanner(text, color, duration)
-    table.insert(bannerQueue, { text = text, color = color, duration = duration or 5 })
+local function showBanner(label, value, color, duration)
+    table.insert(bannerQueue, { label = label, value = value, color = color, duration = duration or 5 })
 end
 
 local pendingAnnouncements = {}
@@ -158,34 +158,53 @@ function script.drawUI()
     -- mande dos veces (una desde cada copia del script).
     for _, item in ipairs(pendingAnnouncements) do
         ac.sendChatMessage(item.chatMsg)
-        showBanner(item.bannerMsg, item.color, item.duration)
+        showBanner(item.label, item.value, item.color, item.duration)
     end
     pendingAnnouncements = {}
 
     if banner.timer > 0 then
-        banner.alpha = math.min(banner.alpha + 0.08, 1)
+        banner.alpha = math.min(banner.alpha + 0.10, 1)
     else
-        banner.alpha = math.max(banner.alpha - 0.08, 0)
+        banner.alpha = math.max(banner.alpha - 0.10, 0)
     end
 
     if banner.alpha <= 0 then
         return
     end
 
-    local panelWidth = 620
-    local panelHeight = 90
-    local x = (screen.w - panelWidth) * 0.5
-    local y = 60
+    -- Estilo F1: barra rectangular (esquinas rectas), franja de color a la izquierda,
+    -- fondo oscuro semitransparente, categoría chica arriba + dato grande abajo.
+    local panelWidth = 560
+    local panelHeight = 84
+    local stripeWidth = 10
+    local x = 40
+    local y = 50
 
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * banner.alpha), 10)
-    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight),
-        rgbm(banner.color.r, banner.color.g, banner.color.b, banner.alpha), 10, 0, 3)
+    local a = banner.alpha
+    local c = banner.color
 
+    -- Fondo
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.06, 0.06, 0.08, 0.90 * a))
+    -- Franja de color a la izquierda
+    ui.drawRectFilled(vec2(x, y), vec2(x + stripeWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a))
+    -- Línea fina separando el panel del resto
+    ui.drawLine(vec2(x, y + panelHeight), vec2(x + panelWidth, y + panelHeight), rgbm(1, 1, 1, 0.15 * a), 1)
+
+    local textX = x + stripeWidth + 22
+
+    -- Categoría (chica, en mayúsculas, color de la franja)
+    ui.pushFont(ui.Font.Small)
+    ui.setCursor(vec2(textX, y + 14))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
+    ui.text(banner.label)
+    ui.popStyleColor()
+    ui.popFont()
+
+    -- Dato principal (grande, blanco)
     ui.pushFont(ui.Font.Title)
-    local textSize = ui.measureText(banner.text)
-    ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(banner.color.r, banner.color.g, banner.color.b, banner.alpha))
-    ui.text(banner.text)
+    ui.setCursor(vec2(textX, y + 36))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
+    ui.text(banner.value)
     ui.popStyleColor()
     ui.popFont()
 end
@@ -195,7 +214,8 @@ function script.update(dt)
         banner.timer = banner.timer - dt
     elseif #bannerQueue > 0 then
         local next_ = table.remove(bannerQueue, 1)
-        banner.text = next_.text
+        banner.label = next_.label
+        banner.value = next_.value
         banner.color = next_.color
         banner.timer = next_.duration
     end
@@ -221,8 +241,14 @@ function script.update(dt)
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
     if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
         winnerAnnounced = true
-        local msg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
-        table.insert(pendingAnnouncements, { chatMsg = msg, bannerMsg = msg, color = rgbm(1.0, 0.82, 0.0, 1), duration = 6 })
+        local chatMsg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
+        table.insert(pendingAnnouncements, {
+            chatMsg = chatMsg,
+            label = "GANADOR DE LA CARRERA",
+            value = car:driverName(),
+            color = rgbm(1.0, 0.78, 0.05, 1),
+            duration = 7
+        })
         ac.log("[ANNOUNCE] GANADOR detectado: " .. car:driverName() .. " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
         raceFinishedEvent({})
     end
@@ -242,8 +268,14 @@ function script.update(dt)
                 if bestLapTimeMs == nil or lapTimeMs < bestLapTimeMs then
                     bestLapTimeMs = lapTimeMs
                     bestLapDriver = car:driverName()
-                    local msg = "⏱️ NUEVA VUELTA RÁPIDA: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
-                    table.insert(pendingAnnouncements, { chatMsg = msg, bannerMsg = msg, color = rgbm(0.2, 0.8, 1.0, 1), duration = 5 })
+                    local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
+                    table.insert(pendingAnnouncements, {
+                        chatMsg = chatMsg,
+                        label = "VUELTA MÁS RÁPIDA",
+                        value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
+                        color = rgbm(0.65, 0.25, 1.0, 1), -- violeta, el color oficial de F1 para fastest lap
+                        duration = 6
+                    })
                     lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
                 end
             end
