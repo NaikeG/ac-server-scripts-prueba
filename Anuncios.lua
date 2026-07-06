@@ -271,7 +271,7 @@ function script.update(dt)
                     local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
                     table.insert(pendingAnnouncements, {
                         chatMsg = chatMsg,
-                        label = "VUELTA MÁS RÁPIDA",
+                        label = "VUELTA RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
                         color = rgbm(0.65, 0.25, 1.0, 1), -- violeta, el color oficial de F1 para fastest lap
                         duration = 6
