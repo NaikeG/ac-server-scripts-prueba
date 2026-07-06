@@ -177,7 +177,7 @@ function script.drawUI()
     local panelWidth = 560
     local panelHeight = 84
     local stripeWidth = 10
-    local x = 40
+    local x = (screen.w - panelWidth) * 0.5
     local y = 50
 
     local a = banner.alpha
@@ -196,7 +196,7 @@ function script.drawUI()
     ui.pushFont(ui.Font.Small)
     ui.setCursor(vec2(textX, y + 14))
     ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
-    ui.text(banner.label)
+    ui.text(string.upper(banner.label))
     ui.popStyleColor()
     ui.popFont()
 
@@ -204,7 +204,7 @@ function script.drawUI()
     ui.pushFont(ui.Font.Title)
     ui.setCursor(vec2(textX, y + 36))
     ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
-    ui.text(banner.value)
+    ui.text(string.upper(banner.value))
     ui.popStyleColor()
     ui.popFont()
 end
