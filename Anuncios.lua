@@ -175,44 +175,30 @@ function script.drawUI()
     local a = banner.alpha
     local c = banner.color
 
-    local barWidth = 560
-    local barHeight = 66
-    local tabHeight = 30
-    local tabWidth = 300
-    local x = (screen.w - barWidth) * 0.5
-    local barY = 80
-    local tabY = barY - tabHeight + 2 -- se superpone un poco con la barra, como en TV
+    local panelWidth = 620
+    local panelHeight = 96
+    local x = (screen.w - panelWidth) * 0.5
+    local y = 60
 
-    -- Sombra/glow suave detrás de todo el conjunto
-    ui.drawRectFilled(vec2(x - 6, tabY - 6), vec2(x + barWidth + 6, barY + barHeight + 6), rgbm(0, 0, 0, 0.35 * a))
+    -- Fondo oscuro con marco redondeado del color de la categoría
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
+    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
 
-    ------------------------------------------------
-    -- Etiqueta superior (categoría, color sólido, texto oscuro)
-    ------------------------------------------------
-    ui.drawRectFilled(vec2(x, tabY), vec2(x + tabWidth, tabY + tabHeight), rgbm(c.r, c.g, c.b, a))
-
+    -- Categoría (chica, en mayúsculas, color del marco)
     ui.pushFont(ui.Font.Small)
     local labelText = (banner.icon ~= "" and (banner.icon .. "  ") or "") .. string.upper(banner.label)
     local labelSize = ui.measureText(labelText)
-    ui.setCursor(vec2(x + 16, tabY + (tabHeight - labelSize.y) * 0.5))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, a))
+    ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
     ui.text(labelText)
     ui.popStyleColor()
     ui.popFont()
 
-    ------------------------------------------------
-    -- Barra principal (fondo oscuro, dato grande en blanco)
-    ------------------------------------------------
-    ui.drawRectFilled(vec2(x, barY), vec2(x + barWidth, barY + barHeight), rgbm(0.05, 0.05, 0.06, 0.92 * a))
-    -- Línea de acento abajo, del color de la categoría
-    ui.drawRectFilled(vec2(x, barY + barHeight - 3), vec2(x + barWidth, barY + barHeight), rgbm(c.r, c.g, c.b, a))
-    -- Filo superior sutil (brillo)
-    ui.drawLine(vec2(x, barY), vec2(x + barWidth, barY), rgbm(1, 1, 1, 0.12 * a), 1)
-
+    -- Dato principal (grande, blanco, en mayúsculas)
     ui.pushFont(ui.Font.Title)
     local valueText = string.upper(banner.value)
     local valueSize = ui.measureText(valueText)
-    ui.setCursor(vec2(x + (barWidth - valueSize.x) * 0.5, barY + (barHeight - valueSize.y) * 0.5 - 2))
+    ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
     ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
     ui.text(valueText)
     ui.popStyleColor()
@@ -283,10 +269,10 @@ function script.update(dt)
                     local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
                     table.insert(pendingAnnouncements, {
                         chatMsg = chatMsg,
-                        label = "VUELTA RÁPIDA",
+                        label = "NUEVA VUELTA RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
                         icon = "⏱️",
-                        color = rgbm(0.65, 0.25, 1.0, 1), -- violeta, el color oficial de F1 para fastest lap
+                        color = rgbm(0.2, 0.8, 1.0, 1), -- celeste
                         duration = 6
                     })
                     lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
