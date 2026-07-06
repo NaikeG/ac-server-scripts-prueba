@@ -142,11 +142,11 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
-local banner = { label = "", value = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
+local banner = { label = "", value = "", icon = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
 local bannerQueue = {}
 
-local function showBanner(label, value, color, duration)
-    table.insert(bannerQueue, { label = label, value = value, color = color, duration = duration or 5 })
+local function showBanner(label, value, icon, color, duration)
+    table.insert(bannerQueue, { label = label, value = value, icon = icon, color = color, duration = duration or 5 })
 end
 
 local pendingAnnouncements = {}
@@ -158,7 +158,7 @@ function script.drawUI()
     -- mande dos veces (una desde cada copia del script).
     for _, item in ipairs(pendingAnnouncements) do
         ac.sendChatMessage(item.chatMsg)
-        showBanner(item.label, item.value, item.color, item.duration)
+        showBanner(item.label, item.value, item.icon, item.color, item.duration)
     end
     pendingAnnouncements = {}
 
@@ -172,39 +172,49 @@ function script.drawUI()
         return
     end
 
-    -- Estilo F1: barra rectangular (esquinas rectas), franja de color a la izquierda,
-    -- fondo oscuro semitransparente, categoría chica arriba + dato grande abajo.
-    local panelWidth = 560
-    local panelHeight = 84
-    local stripeWidth = 10
-    local x = (screen.w - panelWidth) * 0.5
-    local y = 50
-
     local a = banner.alpha
     local c = banner.color
 
-    -- Fondo
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.06, 0.06, 0.08, 0.90 * a))
-    -- Franja de color a la izquierda
-    ui.drawRectFilled(vec2(x, y), vec2(x + stripeWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a))
-    -- Línea fina separando el panel del resto
-    ui.drawLine(vec2(x, y + panelHeight), vec2(x + panelWidth, y + panelHeight), rgbm(1, 1, 1, 0.15 * a), 1)
+    local barWidth = 560
+    local barHeight = 66
+    local tabHeight = 30
+    local tabWidth = 300
+    local x = (screen.w - barWidth) * 0.5
+    local barY = 80
+    local tabY = barY - tabHeight + 2 -- se superpone un poco con la barra, como en TV
 
-    local textX = x + stripeWidth + 22
+    -- Sombra/glow suave detrás de todo el conjunto
+    ui.drawRectFilled(vec2(x - 6, tabY - 6), vec2(x + barWidth + 6, barY + barHeight + 6), rgbm(0, 0, 0, 0.35 * a))
 
-    -- Categoría (chica, en mayúsculas, color de la franja)
+    ------------------------------------------------
+    -- Etiqueta superior (categoría, color sólido, texto oscuro)
+    ------------------------------------------------
+    ui.drawRectFilled(vec2(x, tabY), vec2(x + tabWidth, tabY + tabHeight), rgbm(c.r, c.g, c.b, a))
+
     ui.pushFont(ui.Font.Small)
-    ui.setCursor(vec2(textX, y + 14))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
-    ui.text(string.upper(banner.label))
+    local labelText = (banner.icon ~= "" and (banner.icon .. "  ") or "") .. string.upper(banner.label)
+    local labelSize = ui.measureText(labelText)
+    ui.setCursor(vec2(x + 16, tabY + (tabHeight - labelSize.y) * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, a))
+    ui.text(labelText)
     ui.popStyleColor()
     ui.popFont()
 
-    -- Dato principal (grande, blanco)
+    ------------------------------------------------
+    -- Barra principal (fondo oscuro, dato grande en blanco)
+    ------------------------------------------------
+    ui.drawRectFilled(vec2(x, barY), vec2(x + barWidth, barY + barHeight), rgbm(0.05, 0.05, 0.06, 0.92 * a))
+    -- Línea de acento abajo, del color de la categoría
+    ui.drawRectFilled(vec2(x, barY + barHeight - 3), vec2(x + barWidth, barY + barHeight), rgbm(c.r, c.g, c.b, a))
+    -- Filo superior sutil (brillo)
+    ui.drawLine(vec2(x, barY), vec2(x + barWidth, barY), rgbm(1, 1, 1, 0.12 * a), 1)
+
     ui.pushFont(ui.Font.Title)
-    ui.setCursor(vec2(textX, y + 36))
+    local valueText = string.upper(banner.value)
+    local valueSize = ui.measureText(valueText)
+    ui.setCursor(vec2(x + (barWidth - valueSize.x) * 0.5, barY + (barHeight - valueSize.y) * 0.5 - 2))
     ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
-    ui.text(string.upper(banner.value))
+    ui.text(valueText)
     ui.popStyleColor()
     ui.popFont()
 end
@@ -216,6 +226,7 @@ function script.update(dt)
         local next_ = table.remove(bannerQueue, 1)
         banner.label = next_.label
         banner.value = next_.value
+        banner.icon = next_.icon
         banner.color = next_.color
         banner.timer = next_.duration
     end
@@ -246,6 +257,7 @@ function script.update(dt)
             chatMsg = chatMsg,
             label = "GANADOR DE LA CARRERA",
             value = car:driverName(),
+            icon = "🏆",
             color = rgbm(1.0, 0.78, 0.05, 1),
             duration = 7
         })
@@ -273,6 +285,7 @@ function script.update(dt)
                         chatMsg = chatMsg,
                         label = "VUELTA RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
+                        icon = "⏱️",
                         color = rgbm(0.65, 0.25, 1.0, 1), -- violeta, el color oficial de F1 para fastest lap
                         duration = 6
                     })
