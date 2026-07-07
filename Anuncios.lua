@@ -70,6 +70,8 @@ lapCompletedEvent = ac.OnlineEvent({
     lapTimeMs = ac.StructItem.float(),
     lapNumber = ac.StructItem.float()
 }, function(sender, message)
+    ac.log("[ANNOUNCE] Evento de vuelta recibido de " .. sender:driverName() ..
+        " | tiempo=" .. tostring(message.lapTimeMs) .. " | bestLapTimeMs local actual=" .. tostring(bestLapTimeMs))
     -- Actualiza el registro local y le muestra el cartel a TODOS (el que hizo la vuelta
     -- ya ve el suyo propio desde script.update; esto es para el resto de los pilotos).
     if bestLapTimeMs == nil or message.lapTimeMs < bestLapTimeMs then
