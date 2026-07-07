@@ -3,6 +3,13 @@ car = ac.getCar(0)
 
 local pendingAnnouncements = {}
 
+local function msToTimeString(ms)
+    local totalSeconds = ms / 1000
+    local minutes = math.floor(totalSeconds / 60)
+    local seconds = totalSeconds - minutes * 60
+    return string.format("%d:%05.2f", minutes, seconds)
+end
+
 -- ===== Diagnóstico: encontrar el campo de "cantidad total de vueltas de la carrera" =====
 local totalLapsField = nil
 local totalLapsFieldSource = nil -- "sim", "car" o "config"
@@ -79,7 +86,7 @@ lapCompletedEvent = ac.OnlineEvent({
         bestLapDriver = sender:driverName()
         table.insert(pendingAnnouncements, {
             chatMsg = nil, -- el chat ya lo mandó el que hizo la vuelta
-            label = "VUELTA MÁS RÁPIDA",
+            label = "NUEVA VUELA RÁPIDA",
             value = sender:driverName() .. "  " .. msToTimeString(message.lapTimeMs),
             icon = "⏱️",
             color = rgbm(0.2, 0.8, 1.0, 1),
@@ -134,13 +141,6 @@ local function getLastLapTime()
     local ok, val = pcall(function() return car[lapTimeField] end)
     if ok and type(val) == "number" and val > 0 then return val end
     return nil
-end
-
-local function msToTimeString(ms)
-    local totalSeconds = ms / 1000
-    local minutes = math.floor(totalSeconds / 60)
-    local seconds = totalSeconds - minutes * 60
-    return string.format("%d:%05.2f", minutes, seconds)
 end
 
 ac.onOnlineWelcome(function(message, config)
@@ -290,7 +290,7 @@ function script.update(dt)
                     local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
                     table.insert(pendingAnnouncements, {
                         chatMsg = chatMsg,
-                        label = "VUELTA MÁS RÁPIDA",
+                        label = "NUEVA VUELTA RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
                         icon = "⏱️",
                         color = rgbm(0.2, 0.8, 1.0, 1), -- celeste
