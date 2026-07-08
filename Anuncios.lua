@@ -86,7 +86,7 @@ lapCompletedEvent = ac.OnlineEvent({
         bestLapDriver = sender:driverName()
         table.insert(pendingAnnouncements, {
             chatMsg = nil, -- el chat ya lo mandó el que hizo la vuelta
-            label = "NUEVA VUELA RÁPIDA",
+            label = "VUELTA MÁS RÁPIDA",
             value = sender:driverName() .. "  " .. msToTimeString(message.lapTimeMs),
             icon = "⏱️",
             color = rgbm(0.2, 0.8, 1.0, 1),
@@ -124,16 +124,28 @@ local prevLapCount = nil
 -- ===== Diagnóstico: encontrar el campo de "tiempo de la última vuelta" =====
 local lapTimeField = nil
 local function findLapTimeField()
-    local candidates = { "lastLap", "lastLapTimeMs", "lastLapTime", "previousLapTimeMs", "bestLap" }
+    local candidates = {
+        "lastLap", "lastLapTimeMs", "lastLapTime", "previousLapTimeMs", "bestLap",
+        "currentLapTime", "currentLapTimeMs", "sessionBestLapTimeMs", "bestLapTimeMs",
+        "lapTimeMs", "lapTime", "previousLap"
+    }
+    ac.log("[ANNOUNCE] --- Probando todos los campos de tiempo de vuelta candidatos ---")
     for _, name in ipairs(candidates) do
         local ok, val = pcall(function() return car[name] end)
-        if ok and type(val) == "number" then
-            ac.log("[ANNOUNCE] Campo de tiempo de vuelta encontrado: car." .. name .. " = " .. tostring(val))
+        ac.log("[ANNOUNCE] car." .. name .. " = " .. tostring(ok and val or "no existe"))
+    end
+
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "number" and lapTimeField == nil then
             lapTimeField = name
-            return
         end
     end
-    ac.log("[ANNOUNCE] No se encontró campo de tiempo de vuelta -> el anuncio de vuelta rápida queda desactivado")
+    if lapTimeField then
+        ac.log("[ANNOUNCE] Usando car." .. lapTimeField .. " para el tiempo de vuelta")
+    else
+        ac.log("[ANNOUNCE] No se encontró campo de tiempo de vuelta -> el anuncio de vuelta rápida queda desactivado")
+    end
 end
 
 local function getLastLapTime()
@@ -290,7 +302,7 @@ function script.update(dt)
                     local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
                     table.insert(pendingAnnouncements, {
                         chatMsg = chatMsg,
-                        label = "NUEVA VUELTA RÁPIDA",
+                        label = "VUELTA MÁS RÁPIDA",
                         value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
                         icon = "⏱️",
                         color = rgbm(0.2, 0.8, 1.0, 1), -- celeste
