@@ -96,28 +96,58 @@ lapCompletedEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
--- ===== Evento: carrera terminada (para anuncio de ganador) =====
-raceFinishedEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Announce Race Finished")
-}, function(sender, message)
-    if not winnerAnnounced then
-        winnerAnnounced = true
-        table.insert(pendingAnnouncements, {
-            chatMsg = nil, -- el chat ya lo mandó el ganador
-            label = "GANADOR DE LA CARRERA",
-            value = sender:driverName(),
-            icon = "🏆",
-            color = rgbm(1.0, 0.78, 0.05, 1),
-            duration = 7
-        })
-        ac.log("[ANNOUNCE] Ganador registrado: " .. sender:driverName())
+-- ===== Diagnóstico: encontrar el campo de "posición en carrera" (para el podio) =====
+local positionField = nil
+local function findPositionField()
+    local candidates = { "racePosition", "position", "leaderboardPosition", "place", "raceOrder", "racePos", "sessionPosition" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "number" and val > 0 then
+            ac.log("[ANNOUNCE] Campo de posición encontrado: car." .. name .. " = " .. tostring(val))
+            positionField = name
+            return
+        end
     end
+    ac.log("[ANNOUNCE] No se encontró campo de posición -> el podio (P2/P3) queda desactivado, solo se anuncia P1 sin confirmar posición")
+end
+
+local function getRacePosition()
+    if positionField == nil then return nil end
+    local ok, val = pcall(function() return car[positionField] end)
+    if ok then return val end
+    return nil
+end
+
+-- Datos visuales de cada puesto del podio
+local PODIUM = {
+    [1] = { label = "GANADOR DE LA CARRERA", icon = "🏆", color = rgbm(1.0, 0.78, 0.05, 1) },
+    [2] = { label = "SEGUNDO PUESTO", icon = "🥈", color = rgbm(0.78, 0.78, 0.81, 1) },
+    [3] = { label = "TERCER PUESTO", icon = "🥉", color = rgbm(0.82, 0.55, 0.32, 1) },
+}
+
+-- ===== Evento: carrera terminada (para anuncio de podio) =====
+raceFinishedEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Announce Race Finished"),
+    position = ac.StructItem.float()
+}, function(sender, message)
+    local podium = PODIUM[math.floor(message.position)]
+    if podium then
+        table.insert(pendingAnnouncements, {
+            chatMsg = nil, -- el chat ya lo mandó quien terminó
+            label = podium.label,
+            value = sender:driverName(),
+            icon = podium.icon,
+            color = podium.color,
+            duration = 6
+        })
+    end
+    ac.log("[ANNOUNCE] Llegada registrada: " .. sender:driverName() .. " -> P" .. tostring(message.position))
 end,
 ac.SharedNamespace.ServerScript)
 
 bestLapTimeMs = nil
 bestLapDriver = nil
-winnerAnnounced = false
+myFinishAnnounced = false
 
 local prevLapCount = nil
 
@@ -158,6 +188,7 @@ end
 ac.onOnlineWelcome(function(message, config)
     findTotalLapsField(config)
     findLapTimeField()
+    findPositionField()
 end)
 
 ac.onSessionStart(function()
@@ -260,7 +291,7 @@ function script.update(dt)
     if car.lapCount == 0 and prevLapCount > 0 then
         bestLapTimeMs = nil
         bestLapDriver = nil
-        winnerAnnounced = false
+        myFinishAnnounced = false
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -269,19 +300,31 @@ function script.update(dt)
     -- en el frame donde se incrementa el contador de vueltas.
     local totalLaps = getTotalLaps()
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
-    if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not winnerAnnounced then
-        winnerAnnounced = true
-        local chatMsg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
-        table.insert(pendingAnnouncements, {
-            chatMsg = chatMsg,
-            label = "GANADOR DE LA CARRERA",
-            value = car:driverName(),
-            icon = "🏆",
-            color = rgbm(1.0, 0.78, 0.05, 1),
-            duration = 7
-        })
-        ac.log("[ANNOUNCE] GANADOR detectado: " .. car:driverName() .. " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
-        raceFinishedEvent({})
+    if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
+        myFinishAnnounced = true
+        local position = getRacePosition()
+        local posInt = position and math.floor(position) or 1 -- si no hay campo de posición, se asume P1
+
+        local podium = PODIUM[posInt]
+        if podium then
+            local chatMsg
+            if posInt == 1 then
+                chatMsg = "🏆 " .. car:driverName() .. " HA GANADO LA CARRERA!"
+            else
+                chatMsg = podium.icon .. " " .. car:driverName() .. " terminó en P" .. posInt .. "!"
+            end
+            table.insert(pendingAnnouncements, {
+                chatMsg = chatMsg,
+                label = podium.label,
+                value = car:driverName(),
+                icon = podium.icon,
+                color = podium.color,
+                duration = 6
+            })
+            raceFinishedEvent({ position = posInt })
+        end
+        ac.log("[ANNOUNCE] Llegada detectada: " .. car:driverName() .. " -> P" .. tostring(posInt) ..
+            " (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. ")")
     end
 
     if car.lapCount > prevLapCount then
@@ -289,7 +332,7 @@ function script.update(dt)
         prevLapCount = car.lapCount
 
         ac.log("[ANNOUNCE] Vuelta completada: " .. completedLap .. " | car.lapCount=" .. car.lapCount ..
-            " | totalLaps=" .. tostring(totalLaps) .. " | winnerAnnounced=" .. tostring(winnerAnnounced))
+            " | totalLaps=" .. tostring(totalLaps) .. " | myFinishAnnounced=" .. tostring(myFinishAnnounced))
 
         -- La vuelta 1 incluye la salida (no es representativa como "vuelta rápida")
         if completedLap >= 2 then
