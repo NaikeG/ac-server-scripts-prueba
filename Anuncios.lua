@@ -150,6 +150,7 @@ bestLapDriver = nil
 myFinishAnnounced = false
 
 local prevLapCount = nil
+local raceLapsSeenZero = false -- evita falsos positivos si lapCount arranca con un valor viejo de otra sesión
 
 -- ===== Diagnóstico: encontrar el campo de "tiempo de la última vuelta" =====
 local lapTimeField = nil
@@ -283,7 +284,14 @@ function script.update(dt)
 
     if prevLapCount == nil then
         prevLapCount = car.lapCount
+        if car.lapCount == 0 then
+            raceLapsSeenZero = true
+        end
         return
+    end
+
+    if car.lapCount == 0 then
+        raceLapsSeenZero = true
     end
 
     -- Reset real de estado: recién cuando el contador de vueltas vuelve a 0 de verdad
@@ -300,7 +308,7 @@ function script.update(dt)
     -- en el frame donde se incrementa el contador de vueltas.
     local totalLaps = getTotalLaps()
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
-    if isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
+    if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
         myFinishAnnounced = true
         local position = getRacePosition()
         local posInt = position and math.floor(position) or 1 -- si no hay campo de posición, se asume P1
