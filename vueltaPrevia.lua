@@ -4,7 +4,7 @@ local state = {
     enabled = false,
     alpha = 0
 }
-local title = "VUELTA PREVIA"
+local title = "VUELTA DE FORMACION"
 local subtitle = "MANTENER POSICIONES"
 
 local lightCount = 6
