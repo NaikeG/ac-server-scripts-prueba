@@ -135,7 +135,7 @@ local function findLapTimeField()
         ac.log("[ANNOUNCE] car." .. name .. " = " .. tostring(ok and val or "no existe"))
     end
 
-    for _, name in ipairs(candidates) do
+    for _, name in ipairs({ "bestLapTimeMs", "previousLapTimeMs", "lastLap", "lastLapTimeMs", "lastLapTime", "bestLap" }) do
         local ok, val = pcall(function() return car[name] end)
         if ok and type(val) == "number" and lapTimeField == nil then
             lapTimeField = name
