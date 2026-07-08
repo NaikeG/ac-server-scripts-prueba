@@ -7,7 +7,7 @@ local function msToTimeString(ms)
     local totalSeconds = ms / 1000
     local minutes = math.floor(totalSeconds / 60)
     local seconds = totalSeconds - minutes * 60
-    return string.format("%d:%05.2f", minutes, seconds)
+    return string.format("%d:%06.3f", minutes, seconds)
 end
 
 -- ===== Diagnóstico: encontrar el campo de "cantidad total de vueltas de la carrera" =====
