@@ -157,6 +157,14 @@ local function getRankColor(rank)
     return rgbm(0.55, 0.55, 0.58, 1) -- neutro para P4 en adelante
 end
 
+-- Cartel grande centrado del podio (P1/P2/P3), en cola para que no se pisen entre sí
+local podiumBanner = { label = "", value = "", icon = "", color = rgbm(1, 1, 1, 1), timer = 0, alpha = 0 }
+local podiumBannerQueue = {}
+
+local function showPodiumBanner(label, value, icon, color, duration)
+    table.insert(podiumBannerQueue, { label = label, value = value, icon = icon, color = color, duration = duration or 6 })
+end
+
 local function settleAndAnnouncePodium(myName)
     table.sort(finishRecords, function(a, b) return a.time < b.time end)
     for i = 1, #finishRecords do
@@ -170,8 +178,12 @@ local function settleAndAnnouncePodium(myName)
                 raceWon = true
             end
 
+            local podium = PODIUM[i]
+            if podium then
+                showPodiumBanner(podium.label, r.name, podium.icon, podium.color, 6)
+            end
+
             if r.name == myName then
-                local podium = PODIUM[i]
                 if podium then
                     if i == 1 then
                         table.insert(pendingChats, "🏆 " .. r.name .. " HA GANADO LA CARRERA!")
@@ -270,6 +282,8 @@ ac.onSessionStart(function()
     fastestLap.animTimer = 0
     fastestLap.displayTimer = 0
     resultsList = {}
+    podiumBanner.timer = 0
+    podiumBannerQueue = {}
     prevLapCount = nil
     -- Se "desarma" hasta confirmar que la sesión nueva realmente arrancó en la vuelta 0,
     -- para que un lapCount viejo que todavía no bajó no dispare un falso podio de entrada.
@@ -306,7 +320,7 @@ end
 
 local flPosCfg = ac.storage({
     posX = (screen.w - 280) / screen.w, -- proporción de pantalla, por defecto arriba a la derecha
-    posY = 40 / 1080
+    posY = 290 / 1080
 })
 local flDragging = false
 local flDragOffsetX, flDragOffsetY = 0, 0
@@ -333,11 +347,11 @@ function script.drawUI()
 
     if banner.alpha > 0 then
         local a = banner.alpha
-        ui.pushFont(ui.Font.Small)
+        ui.pushFont(ui.Font.Title)
         local text = "🏁  ÚLTIMA VUELTA"
         local textSize = ui.measureText(text)
-        local panelWidth = textSize.x + 28
-        local panelHeight = 26
+        local panelWidth = textSize.x + 56
+        local panelHeight = 52
         local x = (screen.w - panelWidth) * 0.5
         local y = 0
 
@@ -345,6 +359,45 @@ function script.drawUI()
         ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
         ui.text(text)
+        ui.popStyleColor()
+        ui.popFont()
+    end
+
+    ------------------------------------------------
+    -- Cartel grande centrado del podio (P1/P2/P3), aparece uno atrás del otro
+    ------------------------------------------------
+    if podiumBanner.timer > 0 then
+        podiumBanner.alpha = math.min(podiumBanner.alpha + 0.10, 1)
+    else
+        podiumBanner.alpha = math.max(podiumBanner.alpha - 0.10, 0)
+    end
+
+    if podiumBanner.alpha > 0 then
+        local a = podiumBanner.alpha
+        local c = podiumBanner.color
+        local panelWidth = 620
+        local panelHeight = 96
+        local x = (screen.w - panelWidth) * 0.5
+        local y = 90 -- debajo del cartel de última vuelta, para no superponerse
+
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
+        ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
+
+        ui.pushFont(ui.Font.Small)
+        local labelText = (podiumBanner.icon ~= "" and (podiumBanner.icon .. "  ") or "") .. string.upper(podiumBanner.label)
+        local labelSize = ui.measureText(labelText)
+        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
+        ui.text(labelText)
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Title)
+        local valueText = string.upper(podiumBanner.value)
+        local valueSize = ui.measureText(valueText)
+        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
+        ui.text(valueText)
         ui.popStyleColor()
         ui.popFont()
     end
@@ -467,6 +520,17 @@ function script.drawUI()
 end
 
 function script.update(dt)
+    if podiumBanner.timer > 0 then
+        podiumBanner.timer = podiumBanner.timer - dt
+    elseif #podiumBannerQueue > 0 then
+        local nxt = table.remove(podiumBannerQueue, 1)
+        podiumBanner.label = nxt.label
+        podiumBanner.value = nxt.value
+        podiumBanner.icon = nxt.icon
+        podiumBanner.color = nxt.color
+        podiumBanner.timer = nxt.duration
+    end
+
     if fastestLap.animTimer > 0 then
         fastestLap.animTimer = math.max(fastestLap.animTimer - dt, 0)
     end
@@ -510,6 +574,8 @@ function script.update(dt)
         fastestLap.animTimer = 0
         fastestLap.displayTimer = 0
         resultsList = {}
+        podiumBanner.timer = 0
+        podiumBannerQueue = {}
         prevLapCount = 0 -- CRÍTICO: sin esto, la condición de arriba se queda pegada en true para siempre
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
@@ -574,14 +640,11 @@ function script.update(dt)
             ac.log("[ANNOUNCE] Mi llegada detectada (redundante, lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. "), evento enviado")
         end
 
-        -- La vuelta 1 incluye la salida (no es representativa como "vuelta rápida")
-        if completedLap >= 2 then
-            local lapTimeMs = getLastLapTime()
+        local lapTimeMs = getLastLapTime()
 
-            if lapTimeMs ~= nil then
-                addLapCandidate(car:driverName(), lapTimeMs)
-                lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
-            end
+        if lapTimeMs ~= nil then
+            addLapCandidate(car:driverName(), lapTimeMs)
+            lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
         end
     end
 end
