@@ -1,7 +1,7 @@
 sim = ac.getSim()
 car = ac.getCar(0)
 
-local pendingAnnouncements = {}
+local pendingChats = {}
 
 local function msToTimeString(ms)
     local totalSeconds = ms / 1000
@@ -88,6 +88,10 @@ local function addLapCandidate(name, timeMs)
     lapSettleTimer = LAP_SETTLE_DELAY
 end
 
+local FL_ANIM_DURATION = 0.45
+local FL_DISPLAY_DURATION = 6 -- segundos que queda visible antes de desaparecer
+local fastestLap = { driver = nil, timeMs = nil, animTimer = 0, displayTimer = 0 }
+
 local function settleLapCandidates(myName)
     if #lapCandidates == 0 then return end
     table.sort(lapCandidates, function(a, b) return a.time < b.time end)
@@ -97,18 +101,15 @@ local function settleLapCandidates(myName)
     if bestLapTimeMs == nil or winner.time < bestLapTimeMs then
         bestLapTimeMs = winner.time
         bestLapDriver = winner.name
-        local chatMsg = nil
+
+        fastestLap.driver = winner.name
+        fastestLap.timeMs = winner.time
+        fastestLap.animTimer = FL_ANIM_DURATION
+        fastestLap.displayTimer = FL_DISPLAY_DURATION
+
         if winner.name == myName then
-            chatMsg = "⏱️ Nueva vuelta rápida: " .. winner.name .. " - " .. msToTimeString(winner.time)
+            table.insert(pendingChats, "⏱️ Nueva vuelta rápida: " .. winner.name .. " - " .. msToTimeString(winner.time))
         end
-        table.insert(pendingAnnouncements, {
-            chatMsg = chatMsg,
-            label = "VUELTA MÁS RÁPIDA",
-            value = winner.name .. "  " .. msToTimeString(winner.time),
-            icon = "⏱️",
-            color = rgbm(0.2, 0.8, 1.0, 1),
-            duration = 6
-        })
         ac.log("[ANNOUNCE] Vuelta rápida confirmada: " .. winner.name .. " - " .. tostring(winner.time))
     end
 end
@@ -146,30 +147,38 @@ local function addFinishRecord(name, time)
     pendingSettleTimer = SETTLE_DELAY -- reinicia el buffer cada vez que llega uno nuevo
 end
 
+local RESULT_ANIM_DURATION = 0.4
+local resultsList = {} -- { {rank=1, name=..., animTimer=...}, ... } -- se muestra TODA la lista, no solo el podio
+
+local function getRankColor(rank)
+    if rank == 1 then return rgbm(1.0, 0.78, 0.05, 1) end
+    if rank == 2 then return rgbm(0.78, 0.78, 0.81, 1) end
+    if rank == 3 then return rgbm(0.82, 0.55, 0.32, 1) end
+    return rgbm(0.55, 0.55, 0.58, 1) -- neutro para P4 en adelante
+end
+
 local function settleAndAnnouncePodium(myName)
     table.sort(finishRecords, function(a, b) return a.time < b.time end)
-    for i = 1, math.min(3, #finishRecords) do
+    for i = 1, #finishRecords do
         local r = finishRecords[i]
         if not announcedNames[r.name] then
             announcedNames[r.name] = true
-            local podium = PODIUM[i]
-            local chatMsg = nil
+
+            table.insert(resultsList, { rank = i, name = r.name, animTimer = RESULT_ANIM_DURATION })
+
             if r.name == myName then
-                if i == 1 then
-                    chatMsg = "🏆 " .. r.name .. " HA GANADO LA CARRERA!"
+                local podium = PODIUM[i]
+                if podium then
+                    if i == 1 then
+                        table.insert(pendingChats, "🏆 " .. r.name .. " HA GANADO LA CARRERA!")
+                    else
+                        table.insert(pendingChats, podium.icon .. " " .. r.name .. " terminó en P" .. i .. "!")
+                    end
                 else
-                    chatMsg = podium.icon .. " " .. r.name .. " terminó en P" .. i .. "!"
+                    table.insert(pendingChats, "🏁 " .. r.name .. " terminó en P" .. i .. "!")
                 end
             end
-            table.insert(pendingAnnouncements, {
-                chatMsg = chatMsg,
-                label = podium.label,
-                value = r.name,
-                icon = podium.icon,
-                color = podium.color,
-                duration = 6
-            })
-            ac.log("[ANNOUNCE] Podio confirmado: " .. r.name .. " -> P" .. i)
+            ac.log("[ANNOUNCE] Resultado confirmado: " .. r.name .. " -> P" .. i)
         end
     end
 end
@@ -190,20 +199,18 @@ local raceLapsSeenZero = false -- evita falsos positivos si lapCount arranca con
 -- Aviso único para toda la carrera: el primero en llegar a la última vuelta es, por
 -- definición, el líder en ese momento. No lleva nombre de piloto, es un aviso general.
 local raceLastLapAnnounced = false
+local banner = { label = "", value = "", icon = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
 
 lastLapEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Announce Last Lap")
 }, function(sender, message)
     if raceLastLapAnnounced then return end
     raceLastLapAnnounced = true
-    table.insert(pendingAnnouncements, {
-        chatMsg = nil,
-        label = "",
-        value = "ÚLTIMA VUELTA",
-        icon = "🏁",
-        color = rgbm(0.95, 0.95, 0.95, 1),
-        duration = 5
-    })
+    banner.label = ""
+    banner.value = "ÚLTIMA VUELTA"
+    banner.icon = "🏁"
+    banner.color = rgbm(0.95, 0.95, 0.95, 1)
+    banner.timer = 5
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -257,6 +264,11 @@ ac.onSessionStart(function()
     lapCandidates = {}
     lapSettleTimer = 0
     raceLastLapAnnounced = false
+    fastestLap.driver = nil
+    fastestLap.timeMs = nil
+    fastestLap.animTimer = 0
+    fastestLap.displayTimer = 0
+    resultsList = {}
     prevLapCount = nil
     -- Se "desarma" hasta confirmar que la sesión nueva realmente arrancó en la vuelta 0,
     -- para que un lapCount viejo que todavía no bajó no dispare un falso podio de entrada.
@@ -272,79 +284,168 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
-local banner = { label = "", value = "", icon = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
-local bannerQueue = {}
-
-local function showBanner(label, value, icon, color, duration)
-    table.insert(bannerQueue, { label = label, value = value, icon = icon, color = color, duration = duration or 5 })
+local function easeOutCubic(t)
+    t = math.max(0, math.min(1, t))
+    local inv = 1 - t
+    return 1 - inv * inv * inv
 end
 
 function script.drawUI()
-    -- Los anuncios (chat + cartel) se disparan acá y no en script.update, porque
-    -- drawUI solo se ejecuta donde hay pantalla (el cliente), nunca en la copia
-    -- headless que corre en el servidor. Así se evita que el mismo aviso se
-    -- mande dos veces (una desde cada copia del script).
-    for _, item in ipairs(pendingAnnouncements) do
-        if item.chatMsg then
-            ac.sendChatMessage(item.chatMsg)
-        end
-        showBanner(item.label, item.value, item.icon, item.color, item.duration)
+    -- Los mensajes de chat se disparan acá y no en script.update, porque drawUI solo se
+    -- ejecuta donde hay pantalla (el cliente), nunca en la copia headless que corre en el
+    -- servidor. Así se evita que el mismo aviso se mande dos veces.
+    for _, msg in ipairs(pendingChats) do
+        ac.sendChatMessage(msg)
     end
-    pendingAnnouncements = {}
+    pendingChats = {}
 
+    ------------------------------------------------
+    -- Cartel de "ÚLTIMA VUELTA" (centrado, transitorio, como antes)
+    ------------------------------------------------
     if banner.timer > 0 then
         banner.alpha = math.min(banner.alpha + 0.10, 1)
     else
         banner.alpha = math.max(banner.alpha - 0.10, 0)
     end
 
-    if banner.alpha <= 0 then
-        return
+    if banner.alpha > 0 then
+        local a = banner.alpha
+        local c = banner.color
+        local panelWidth = 620
+        local panelHeight = 96
+        local x = (screen.w - panelWidth) * 0.5
+        local y = 60
+
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
+        ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
+
+        ui.pushFont(ui.Font.Small)
+        local labelText = (banner.icon ~= "" and (banner.icon .. "  ") or "") .. string.upper(banner.label)
+        local labelSize = ui.measureText(labelText)
+        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
+        ui.text(labelText)
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Title)
+        local valueText = string.upper(banner.value)
+        local valueSize = ui.measureText(valueText)
+        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
+        ui.text(valueText)
+        ui.popStyleColor()
+        ui.popFont()
     end
 
-    local a = banner.alpha
-    local c = banner.color
+    ------------------------------------------------
+    -- Panel de "FASTEST LAP" (persistente, arriba a la derecha, estilo nativo de AC)
+    ------------------------------------------------
+    if fastestLap.driver ~= nil and fastestLap.displayTimer > 0 then
+        local t = 1 - (fastestLap.animTimer / FL_ANIM_DURATION)
+        local eased = easeOutCubic(t)
+        local slide = (1 - eased) * 70 -- entra deslizándose desde la derecha
 
-    local panelWidth = 620
-    local panelHeight = 96
-    local x = (screen.w - panelWidth) * 0.5
-    local y = 60
+        local panelWidth = 260
+        local panelHeight = 70
+        local x = screen.w - panelWidth - 20 + slide
+        local y = 40
 
-    -- Fondo oscuro con marco redondeado del color de la categoría
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
-    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.04, 0.04, 0.05, 0.92), 6)
+        ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 6, 0, 2)
 
-    -- Categoría (chica, en mayúsculas, color del marco)
-    ui.pushFont(ui.Font.Small)
-    local labelText = (banner.icon ~= "" and (banner.icon .. "  ") or "") .. string.upper(banner.label)
-    local labelSize = ui.measureText(labelText)
-    ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
-    ui.text(labelText)
-    ui.popStyleColor()
-    ui.popFont()
+        ui.pushFont(ui.Font.Small)
+        ui.setCursor(vec2(x + 12, y + 8))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
+        ui.text("VUELTA RAPIDA")
+        ui.popStyleColor()
+        ui.popFont()
 
-    -- Dato principal (grande, blanco, en mayúsculas)
-    ui.pushFont(ui.Font.Title)
-    local valueText = string.upper(banner.value)
-    local valueSize = ui.measureText(valueText)
-    ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
-    ui.text(valueText)
-    ui.popStyleColor()
-    ui.popFont()
+        -- Insignia con el número "1"
+        local badgeSize = 26
+        local badgeX = x + 12
+        local badgeY = y + 32
+        ui.drawRectFilled(vec2(badgeX, badgeY), vec2(badgeX + badgeSize, badgeY + badgeSize), rgbm(0.2, 0.8, 1.0, 1), 4)
+        ui.pushFont(ui.Font.Main)
+        local badgeText = "1"
+        local badgeTextSize = ui.measureText(badgeText)
+        ui.setCursor(vec2(badgeX + (badgeSize - badgeTextSize.x) * 0.5, badgeY + (badgeSize - badgeTextSize.y) * 0.5))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, 1))
+        ui.text(badgeText)
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Main)
+        ui.setCursor(vec2(badgeX + badgeSize + 10, y + 30))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
+        ui.text(string.upper(fastestLap.driver))
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Small)
+        ui.setCursor(vec2(badgeX + badgeSize + 10, y + 48))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.75, 0.75, 0.78, 1))
+        ui.text(msToTimeString(fastestLap.timeMs))
+        ui.popStyleColor()
+        ui.popFont()
+    end
+
+    ------------------------------------------------
+    -- Lista de resultados (persistente, crece con cada piloto que llega)
+    ------------------------------------------------
+    local resultsY = 40 + ((fastestLap.driver ~= nil and fastestLap.displayTimer > 0) and 84 or 0)
+    local rowHeight = 34
+    local panelWidth = 260
+
+    for i, entry in ipairs(resultsList) do
+        local t = 1 - (entry.animTimer / RESULT_ANIM_DURATION)
+        local eased = easeOutCubic(t)
+        local slide = (1 - eased) * 70
+
+        local rowY = resultsY + (i - 1) * rowHeight
+        local x = screen.w - panelWidth - 20 + slide
+        local color = getRankColor(entry.rank)
+
+        ui.drawRectFilled(vec2(x, rowY), vec2(x + panelWidth, rowY + rowHeight - 4), rgbm(0.04, 0.04, 0.05, 0.90), 4)
+
+        local badgeSize = 22
+        local badgeX = x + 6
+        local badgeY = rowY + (rowHeight - 4 - badgeSize) * 0.5
+        ui.drawRectFilled(vec2(badgeX, badgeY), vec2(badgeX + badgeSize, badgeY + badgeSize), color, 3)
+        ui.pushFont(ui.Font.Small)
+        local rankText = tostring(entry.rank)
+        local rankTextSize = ui.measureText(rankText)
+        ui.setCursor(vec2(badgeX + (badgeSize - rankTextSize.x) * 0.5, badgeY + (badgeSize - rankTextSize.y) * 0.5))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, 1))
+        ui.text(rankText)
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Small)
+        ui.setCursor(vec2(badgeX + badgeSize + 10, rowY + (rowHeight - 4) * 0.5 - 8))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
+        ui.text(string.upper(entry.name))
+        ui.popStyleColor()
+        ui.popFont()
+    end
 end
 
 function script.update(dt)
     if banner.timer > 0 then
         banner.timer = banner.timer - dt
-    elseif #bannerQueue > 0 then
-        local next_ = table.remove(bannerQueue, 1)
-        banner.label = next_.label
-        banner.value = next_.value
-        banner.icon = next_.icon
-        banner.color = next_.color
-        banner.timer = next_.duration
+    end
+
+    if fastestLap.animTimer > 0 then
+        fastestLap.animTimer = math.max(fastestLap.animTimer - dt, 0)
+    end
+    if fastestLap.displayTimer > 0 then
+        fastestLap.displayTimer = math.max(fastestLap.displayTimer - dt, 0)
+    end
+
+    for _, entry in ipairs(resultsList) do
+        if entry.animTimer > 0 then
+            entry.animTimer = math.max(entry.animTimer - dt, 0)
+        end
     end
 
     if prevLapCount == nil then
@@ -371,6 +472,11 @@ function script.update(dt)
         lapCandidates = {}
         lapSettleTimer = 0
         raceLastLapAnnounced = false
+        fastestLap.driver = nil
+        fastestLap.timeMs = nil
+        fastestLap.animTimer = 0
+        fastestLap.displayTimer = 0
+        resultsList = {}
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -409,14 +515,12 @@ function script.update(dt)
     if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and totalLaps > 1
         and car.lapCount == totalLaps - 1 and not raceLastLapAnnounced then
         raceLastLapAnnounced = true
-        table.insert(pendingAnnouncements, {
-            chatMsg = "🏁 ÚLTIMA VUELTA!",
-            label = "",
-            value = "ÚLTIMA VUELTA",
-            icon = "🏁",
-            color = rgbm(0.95, 0.95, 0.95, 1),
-            duration = 5
-        })
+        table.insert(pendingChats, "🏁 ÚLTIMA VUELTA!")
+        banner.label = ""
+        banner.value = "ÚLTIMA VUELTA"
+        banner.icon = "🏁"
+        banner.color = rgbm(0.95, 0.95, 0.95, 1)
+        banner.timer = 5
         lastLapEvent({})
         ac.log("[ANNOUNCE] Última vuelta de la carrera anunciada (líder detectado por " .. car:driverName() .. ")")
     end
