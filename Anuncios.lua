@@ -226,10 +226,20 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 ac.onSessionStart(function()
-    -- No reseteamos acá directamente: car.lapCount puede no haber bajado a 0 todavía
-    -- en el instante exacto de este evento (causaba el doble anuncio). El reset real
-    -- ocurre en script.update cuando se detecta que lapCount volvió a 0.
-    sessionJustStarted = true
+    -- Reset inmediato de todo el estado al cambiar de sesión (Practice -> Qualy -> Race, etc.)
+    bestLapTimeMs = nil
+    bestLapDriver = nil
+    myFinishAnnounced = false
+    finishRecords = {}
+    announcedNames = {}
+    pendingSettleTimer = 0
+    lapCandidates = {}
+    lapSettleTimer = 0
+    prevLapCount = nil
+    -- Se "desarma" hasta confirmar que la sesión nueva realmente arrancó en la vuelta 0,
+    -- para que un lapCount viejo que todavía no bajó no dispare un falso podio de entrada.
+    raceLapsSeenZero = false
+    ac.log("[ANNOUNCE] Cambio de sesión detectado, estado reseteado")
 end)
 
 -- ===== Carteles visuales en pantalla =====
