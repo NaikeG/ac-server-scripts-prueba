@@ -71,28 +71,55 @@ local function getTotalLaps()
     return nil
 end
 
+bestLapTimeMs = nil
+bestLapDriver = nil
+myFinishAnnounced = false
+
+-- Igual que con el podio: en vez de anunciar apenas ALGUIEN cree tener un nuevo récord
+-- (que puede ser falso si todavía no le llegó el aviso de un tiempo mejor de otro piloto),
+-- se junta en un buffer y se confirma el más rápido tras un breve período sin novedades.
+local lapCandidates = {}
+local lapSettleTimer = 0
+local LAP_SETTLE_DELAY = 2.0
+
+local function addLapCandidate(name, timeMs)
+    if bestLapTimeMs ~= nil and timeMs >= bestLapTimeMs then return end -- no supera el ya confirmado, ni se molesta
+    table.insert(lapCandidates, { name = name, time = timeMs })
+    lapSettleTimer = LAP_SETTLE_DELAY
+end
+
+local function settleLapCandidates(myName)
+    if #lapCandidates == 0 then return end
+    table.sort(lapCandidates, function(a, b) return a.time < b.time end)
+    local winner = lapCandidates[1]
+    lapCandidates = {}
+
+    if bestLapTimeMs == nil or winner.time < bestLapTimeMs then
+        bestLapTimeMs = winner.time
+        bestLapDriver = winner.name
+        local chatMsg = nil
+        if winner.name == myName then
+            chatMsg = "⏱️ Nueva vuelta rápida: " .. winner.name .. " - " .. msToTimeString(winner.time)
+        end
+        table.insert(pendingAnnouncements, {
+            chatMsg = chatMsg,
+            label = "VUELTA MÁS RÁPIDA",
+            value = winner.name .. "  " .. msToTimeString(winner.time),
+            icon = "⏱️",
+            color = rgbm(0.2, 0.8, 1.0, 1),
+            duration = 6
+        })
+        ac.log("[ANNOUNCE] Vuelta rápida confirmada: " .. winner.name .. " - " .. tostring(winner.time))
+    end
+end
+
 -- ===== Evento: vuelta completada (para vuelta rápida) =====
 lapCompletedEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Announce Lap Completed"),
     lapTimeMs = ac.StructItem.float(),
     lapNumber = ac.StructItem.float()
 }, function(sender, message)
-    ac.log("[ANNOUNCE] Evento de vuelta recibido de " .. sender:driverName() ..
-        " | tiempo=" .. tostring(message.lapTimeMs) .. " | bestLapTimeMs local actual=" .. tostring(bestLapTimeMs))
-    -- Actualiza el registro local y le muestra el cartel a TODOS (el que hizo la vuelta
-    -- ya ve el suyo propio desde script.update; esto es para el resto de los pilotos).
-    if bestLapTimeMs == nil or message.lapTimeMs < bestLapTimeMs then
-        bestLapTimeMs = message.lapTimeMs
-        bestLapDriver = sender:driverName()
-        table.insert(pendingAnnouncements, {
-            chatMsg = nil, -- el chat ya lo mandó el que hizo la vuelta
-            label = "VUELTA MÁS RÁPIDA",
-            value = sender:driverName() .. "  " .. msToTimeString(message.lapTimeMs),
-            icon = "⏱️",
-            color = rgbm(0.2, 0.8, 1.0, 1),
-            duration = 6
-        })
-    end
+    addLapCandidate(sender:driverName(), message.lapTimeMs)
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -155,10 +182,6 @@ raceFinishedEvent = ac.OnlineEvent({
     addFinishRecord(sender:driverName(), message.finishTime)
 end,
 ac.SharedNamespace.ServerScript)
-
-bestLapTimeMs = nil
-bestLapDriver = nil
-myFinishAnnounced = false
 
 local prevLapCount = nil
 local raceLapsSeenZero = false -- evita falsos positivos si lapCount arranca con un valor viejo de otra sesión
@@ -313,6 +336,8 @@ function script.update(dt)
         finishRecords = {}
         announcedNames = {}
         pendingSettleTimer = 0
+        lapCandidates = {}
+        lapSettleTimer = 0
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -338,6 +363,15 @@ function script.update(dt)
         end
     end
 
+    -- Confirma la vuelta rápida recién cuando pasó el tiempo de estabilización sin avisos nuevos
+    if lapSettleTimer > 0 then
+        lapSettleTimer = lapSettleTimer - dt
+        if lapSettleTimer <= 0 then
+            lapSettleTimer = 0
+            settleLapCandidates(car:driverName())
+        end
+    end
+
     if car.lapCount > prevLapCount then
         local completedLap = prevLapCount + 1
         prevLapCount = car.lapCount
@@ -350,20 +384,8 @@ function script.update(dt)
             local lapTimeMs = getLastLapTime()
 
             if lapTimeMs ~= nil then
-                if bestLapTimeMs == nil or lapTimeMs < bestLapTimeMs then
-                    bestLapTimeMs = lapTimeMs
-                    bestLapDriver = car:driverName()
-                    local chatMsg = "⏱️ Nueva vuelta rápida: " .. car:driverName() .. " - " .. msToTimeString(lapTimeMs)
-                    table.insert(pendingAnnouncements, {
-                        chatMsg = chatMsg,
-                        label = "VUELTA MÁS RÁPIDA",
-                        value = car:driverName() .. "  " .. msToTimeString(lapTimeMs),
-                        icon = "⏱️",
-                        color = rgbm(0.2, 0.8, 1.0, 1), -- celeste
-                        duration = 6
-                    })
-                    lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
-                end
+                addLapCandidate(car:driverName(), lapTimeMs)
+                lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
             end
         end
     end
