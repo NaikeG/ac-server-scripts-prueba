@@ -103,7 +103,7 @@ local function settleLapCandidates(myName)
         end
         table.insert(pendingAnnouncements, {
             chatMsg = chatMsg,
-            label = "NUEVA VUELTA RÁPIDA",
+            label = "VUELTA MÁS RÁPIDA",
             value = winner.name .. "  " .. msToTimeString(winner.time),
             icon = "⏱️",
             color = rgbm(0.2, 0.8, 1.0, 1),
