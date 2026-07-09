@@ -103,44 +103,56 @@ local PODIUM = {
     [3] = { label = "TERCER PUESTO", icon = "🥉", color = rgbm(0.82, 0.55, 0.32, 1) },
 }
 
--- El podio se arma por ORDEN REAL DE LLEGADA de los avisos (quién cruza primero, avisa primero),
--- no por un campo de "posición" que puede quedar desactualizado en cruces muy ajustados.
-local finishOrder = {}
+-- El podio se arma ordenando por la HORA REAL de cruce (sim.currentSessionTime), no por el
+-- orden en que a cada cliente le llegan los avisos por red (eso podía dar resultados
+-- distintos según a quién le llegaba primero cada mensaje).
+local finishRecords = {} -- { {name=..., time=...}, ... }
+local announcedNames = {}
+local pendingSettleTimer = 0
+local SETTLE_DELAY = 1.5 -- segundos de espera tras el último aviso recibido, para que lleguen los que venían atrasados
 
-local function handleFinish(name, sendChat)
-    for _, n in ipairs(finishOrder) do
-        if n == name then return end -- ya registrado, no duplicar
+local function addFinishRecord(name, time)
+    for _, r in ipairs(finishRecords) do
+        if r.name == name then return end -- ya registrado
     end
-    table.insert(finishOrder, name)
-    local posInt = #finishOrder
+    table.insert(finishRecords, { name = name, time = time })
+    pendingSettleTimer = SETTLE_DELAY -- reinicia el buffer cada vez que llega uno nuevo
+end
 
-    local podium = PODIUM[posInt]
-    if podium then
-        local chatMsg = nil
-        if sendChat then
-            if posInt == 1 then
-                chatMsg = "🏆 " .. name .. " HA GANADO LA CARRERA!"
-            else
-                chatMsg = podium.icon .. " " .. name .. " terminó en P" .. posInt .. "!"
+local function settleAndAnnouncePodium(myName)
+    table.sort(finishRecords, function(a, b) return a.time < b.time end)
+    for i = 1, math.min(3, #finishRecords) do
+        local r = finishRecords[i]
+        if not announcedNames[r.name] then
+            announcedNames[r.name] = true
+            local podium = PODIUM[i]
+            local chatMsg = nil
+            if r.name == myName then
+                if i == 1 then
+                    chatMsg = "🏆 " .. r.name .. " HA GANADO LA CARRERA!"
+                else
+                    chatMsg = podium.icon .. " " .. r.name .. " terminó en P" .. i .. "!"
+                end
             end
+            table.insert(pendingAnnouncements, {
+                chatMsg = chatMsg,
+                label = podium.label,
+                value = r.name,
+                icon = podium.icon,
+                color = podium.color,
+                duration = 6
+            })
+            ac.log("[ANNOUNCE] Podio confirmado: " .. r.name .. " -> P" .. i)
         end
-        table.insert(pendingAnnouncements, {
-            chatMsg = chatMsg,
-            label = podium.label,
-            value = name,
-            icon = podium.icon,
-            color = podium.color,
-            duration = 6
-        })
     end
-    ac.log("[ANNOUNCE] Llegada registrada: " .. name .. " -> P" .. posInt)
 end
 
 -- ===== Evento: carrera terminada (para anuncio de podio) =====
 raceFinishedEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Announce Race Finished")
+    key = ac.StructItem.key("Announce Race Finished"),
+    finishTime = ac.StructItem.float()
 }, function(sender, message)
-    handleFinish(sender:driverName(), false)
+    addFinishRecord(sender:driverName(), message.finishTime)
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -298,7 +310,9 @@ function script.update(dt)
         bestLapTimeMs = nil
         bestLapDriver = nil
         myFinishAnnounced = false
-        finishOrder = {}
+        finishRecords = {}
+        announcedNames = {}
+        pendingSettleTimer = 0
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -309,9 +323,19 @@ function script.update(dt)
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
     if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
         myFinishAnnounced = true
-        handleFinish(car:driverName(), true)
-        raceFinishedEvent({})
+        local myFinishTime = sim.currentSessionTime
+        addFinishRecord(car:driverName(), myFinishTime)
+        raceFinishedEvent({ finishTime = myFinishTime })
         ac.log("[ANNOUNCE] Mi llegada detectada (lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. "), evento enviado")
+    end
+
+    -- Confirma el podio recién cuando pasó el tiempo de estabilización sin avisos nuevos
+    if pendingSettleTimer > 0 then
+        pendingSettleTimer = pendingSettleTimer - dt
+        if pendingSettleTimer <= 0 then
+            pendingSettleTimer = 0
+            settleAndAnnouncePodium(car:driverName())
+        end
     end
 
     if car.lapCount > prevLapCount then
