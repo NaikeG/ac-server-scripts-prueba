@@ -166,6 +166,10 @@ local function settleAndAnnouncePodium(myName)
 
             table.insert(resultsList, { rank = i, name = r.name, animTimer = RESULT_ANIM_DURATION })
 
+            if i == 1 then
+                raceWon = true
+            end
+
             if r.name == myName then
                 local podium = PODIUM[i]
                 if podium then
@@ -199,18 +203,14 @@ local raceLapsSeenZero = false -- evita falsos positivos si lapCount arranca con
 -- Aviso único para toda la carrera: el primero en llegar a la última vuelta es, por
 -- definición, el líder en ese momento. No lleva nombre de piloto, es un aviso general.
 local raceLastLapAnnounced = false
-local banner = { label = "", value = "", icon = "", alpha = 0, timer = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
+local raceWon = false -- se pone en true apenas se confirma el P1 (quien gane la carrera)
+local banner = { label = "", value = "", icon = "", alpha = 0, color = rgbm(1.0, 0.82, 0.0, 1) }
 
 lastLapEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Announce Last Lap")
 }, function(sender, message)
     if raceLastLapAnnounced then return end
     raceLastLapAnnounced = true
-    banner.label = ""
-    banner.value = "ÚLTIMA VUELTA"
-    banner.icon = "🏁"
-    banner.color = rgbm(0.95, 0.95, 0.95, 1)
-    banner.timer = 5
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -264,6 +264,7 @@ ac.onSessionStart(function()
     lapCandidates = {}
     lapSettleTimer = 0
     raceLastLapAnnounced = false
+    raceWon = false
     fastestLap.driver = nil
     fastestLap.timeMs = nil
     fastestLap.animTimer = 0
@@ -290,6 +291,26 @@ local function easeOutCubic(t)
     return 1 - inv * inv * inv
 end
 
+-- ===== Arrastre manual con click sostenido (panel de Vuelta Rápida) =====
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+local flPosCfg = ac.storage({
+    posX = (screen.w - 280) / screen.w, -- proporción de pantalla, por defecto arriba a la derecha
+    posY = 40 / 1080
+})
+local flDragging = false
+local flDragOffsetX, flDragOffsetY = 0, 0
+
 function script.drawUI()
     -- Los mensajes de chat se disparan acá y no en script.update, porque drawUI solo se
     -- ejecuta donde hay pantalla (el cliente), nunca en la copia headless que corre en el
@@ -300,9 +321,11 @@ function script.drawUI()
     pendingChats = {}
 
     ------------------------------------------------
-    -- Cartel de "ÚLTIMA VUELTA" (centrado, transitorio, como antes)
+    -- Cartel de "ÚLTIMA VUELTA" (arriba centrado, estilo "LEADER IS ON FINAL LAP" nativo,
+    -- persistente hasta que se confirme el ganador, no por tiempo fijo)
     ------------------------------------------------
-    if banner.timer > 0 then
+    local showLastLapBanner = raceLastLapAnnounced and not raceWon
+    if showLastLapBanner then
         banner.alpha = math.min(banner.alpha + 0.10, 1)
     else
         banner.alpha = math.max(banner.alpha - 0.10, 0)
@@ -310,46 +333,59 @@ function script.drawUI()
 
     if banner.alpha > 0 then
         local a = banner.alpha
-        local c = banner.color
-        local panelWidth = 620
-        local panelHeight = 96
-        local x = (screen.w - panelWidth) * 0.5
-        local y = 60
-
-        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
-        ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
-
         ui.pushFont(ui.Font.Small)
-        local labelText = (banner.icon ~= "" and (banner.icon .. "  ") or "") .. string.upper(banner.label)
-        local labelSize = ui.measureText(labelText)
-        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
-        ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
-        ui.text(labelText)
-        ui.popStyleColor()
-        ui.popFont()
+        local text = "🏁  ÚLTIMA VUELTA"
+        local textSize = ui.measureText(text)
+        local panelWidth = textSize.x + 28
+        local panelHeight = 26
+        local x = (screen.w - panelWidth) * 0.5
+        local y = 0
 
-        ui.pushFont(ui.Font.Title)
-        local valueText = string.upper(banner.value)
-        local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.10, 0.10, 0.10, 0.9 * a))
+        ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
-        ui.text(valueText)
+        ui.text(text)
         ui.popStyleColor()
         ui.popFont()
     end
 
     ------------------------------------------------
-    -- Panel de "FASTEST LAP" (persistente, arriba a la derecha, estilo nativo de AC)
+    -- Panel de "VUELTA RAPIDA" (arriba a la derecha por defecto, arrastrable, estilo nativo de AC)
     ------------------------------------------------
     if fastestLap.driver ~= nil and fastestLap.displayTimer > 0 then
+        local panelWidth = 260
+        local panelHeight = 70
+
+        local baseX = flPosCfg.posX * screen.w
+        local baseY = flPosCfg.posY * screen.h
+
+        local mp = getMousePos()
+        local mouseIsDown = isMouseButtonDown()
+        if mp ~= nil then
+            local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
+            if not flDragging and mouseIsDown and overPanel then
+                flDragging = true
+                flDragOffsetX = mp.x - baseX
+                flDragOffsetY = mp.y - baseY
+            end
+            if flDragging then
+                if mouseIsDown then
+                    baseX = mp.x - flDragOffsetX
+                    baseY = mp.y - flDragOffsetY
+                    flPosCfg.posX = baseX / screen.w
+                    flPosCfg.posY = baseY / screen.h
+                else
+                    flDragging = false
+                end
+            end
+        end
+
         local t = 1 - (fastestLap.animTimer / FL_ANIM_DURATION)
         local eased = easeOutCubic(t)
         local slide = (1 - eased) * 70 -- entra deslizándose desde la derecha
 
-        local panelWidth = 260
-        local panelHeight = 70
-        local x = screen.w - panelWidth - 20 + slide
-        local y = 40
+        local x = baseX + slide
+        local y = baseY
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.04, 0.04, 0.05, 0.92), 6)
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 6, 0, 2)
@@ -393,7 +429,7 @@ function script.drawUI()
     ------------------------------------------------
     -- Lista de resultados (persistente, crece con cada piloto que llega)
     ------------------------------------------------
-    local resultsY = 40 + ((fastestLap.driver ~= nil and fastestLap.displayTimer > 0) and 84 or 0)
+    local resultsY = 130
     local rowHeight = 34
     local panelWidth = 260
 
@@ -431,10 +467,6 @@ function script.drawUI()
 end
 
 function script.update(dt)
-    if banner.timer > 0 then
-        banner.timer = banner.timer - dt
-    end
-
     if fastestLap.animTimer > 0 then
         fastestLap.animTimer = math.max(fastestLap.animTimer - dt, 0)
     end
@@ -472,11 +504,13 @@ function script.update(dt)
         lapCandidates = {}
         lapSettleTimer = 0
         raceLastLapAnnounced = false
+        raceWon = false
         fastestLap.driver = nil
         fastestLap.timeMs = nil
         fastestLap.animTimer = 0
         fastestLap.displayTimer = 0
         resultsList = {}
+        prevLapCount = 0 -- CRÍTICO: sin esto, la condición de arriba se queda pegada en true para siempre
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -511,16 +545,12 @@ function script.update(dt)
         end
     end
 
-    -- Última vuelta: aviso único para toda la carrera, apenas el PRIMERO (el líder) entra a su vuelta final
+    -- Última vuelta: aviso único para toda la carrera, apenas el PRIMERO (el líder) entra a su vuelta final.
+    -- Queda visible hasta que se confirme el ganador (raceWon), no por un tiempo fijo.
     if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and totalLaps > 1
         and car.lapCount == totalLaps - 1 and not raceLastLapAnnounced then
         raceLastLapAnnounced = true
         table.insert(pendingChats, "🏁 ÚLTIMA VUELTA!")
-        banner.label = ""
-        banner.value = "ÚLTIMA VUELTA"
-        banner.icon = "🏁"
-        banner.color = rgbm(0.95, 0.95, 0.95, 1)
-        banner.timer = 5
         lastLapEvent({})
         ac.log("[ANNOUNCE] Última vuelta de la carrera anunciada (líder detectado por " .. car:driverName() .. ")")
     end
@@ -531,6 +561,18 @@ function script.update(dt)
 
         ac.log("[ANNOUNCE] Vuelta completada: " .. completedLap .. " | car.lapCount=" .. car.lapCount ..
             " | totalLaps=" .. tostring(totalLaps) .. " | myFinishAnnounced=" .. tostring(myFinishAnnounced))
+
+        -- Chequeo de ganador redundante: se repite acá (además del chequeo aislado de arriba)
+        -- porque este bloque confirmadamente se ejecuta con el valor correcto de car.lapCount
+        -- justo en el momento en que se completa la vuelta, sin depender de que otro chequeo
+        -- llegue a tiempo antes de un posible reset/teletransporte.
+        if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
+            myFinishAnnounced = true
+            local myFinishTime = sim.currentSessionTime
+            addFinishRecord(car:driverName(), myFinishTime)
+            raceFinishedEvent({ finishTime = myFinishTime })
+            ac.log("[ANNOUNCE] Mi llegada detectada (redundante, lapCount=" .. car.lapCount .. ", totalLaps=" .. totalLaps .. "), evento enviado")
+        end
 
         -- La vuelta 1 incluye la salida (no es representativa como "vuelta rápida")
         if completedLap >= 2 then
