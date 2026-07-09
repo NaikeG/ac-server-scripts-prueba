@@ -186,6 +186,27 @@ ac.SharedNamespace.ServerScript)
 local prevLapCount = nil
 local raceLapsSeenZero = false -- evita falsos positivos si lapCount arranca con un valor viejo de otra sesión
 
+-- ===== Última vuelta =====
+-- Aviso único para toda la carrera: el primero en llegar a la última vuelta es, por
+-- definición, el líder en ese momento. No lleva nombre de piloto, es un aviso general.
+local raceLastLapAnnounced = false
+
+lastLapEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Announce Last Lap")
+}, function(sender, message)
+    if raceLastLapAnnounced then return end
+    raceLastLapAnnounced = true
+    table.insert(pendingAnnouncements, {
+        chatMsg = nil,
+        label = "",
+        value = "ÚLTIMA VUELTA",
+        icon = "🏁",
+        color = rgbm(0.95, 0.95, 0.95, 1),
+        duration = 5
+    })
+end,
+ac.SharedNamespace.ServerScript)
+
 -- ===== Diagnóstico: encontrar el campo de "tiempo de la última vuelta" =====
 local lapTimeField = nil
 local function findLapTimeField()
@@ -235,6 +256,7 @@ ac.onSessionStart(function()
     pendingSettleTimer = 0
     lapCandidates = {}
     lapSettleTimer = 0
+    raceLastLapAnnounced = false
     prevLapCount = nil
     -- Se "desarma" hasta confirmar que la sesión nueva realmente arrancó en la vuelta 0,
     -- para que un lapCount viejo que todavía no bajó no dispare un falso podio de entrada.
@@ -348,6 +370,7 @@ function script.update(dt)
         pendingSettleTimer = 0
         lapCandidates = {}
         lapSettleTimer = 0
+        raceLastLapAnnounced = false
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -380,6 +403,22 @@ function script.update(dt)
             lapSettleTimer = 0
             settleLapCandidates(car:driverName())
         end
+    end
+
+    -- Última vuelta: aviso único para toda la carrera, apenas el PRIMERO (el líder) entra a su vuelta final
+    if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and totalLaps > 1
+        and car.lapCount == totalLaps - 1 and not raceLastLapAnnounced then
+        raceLastLapAnnounced = true
+        table.insert(pendingAnnouncements, {
+            chatMsg = "🏁 ÚLTIMA VUELTA!",
+            label = "",
+            value = "ÚLTIMA VUELTA",
+            icon = "🏁",
+            color = rgbm(0.95, 0.95, 0.95, 1),
+            duration = 5
+        })
+        lastLapEvent({})
+        ac.log("[ANNOUNCE] Última vuelta de la carrera anunciada (líder detectado por " .. car:driverName() .. ")")
     end
 
     if car.lapCount > prevLapCount then
