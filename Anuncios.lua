@@ -148,7 +148,8 @@ local function addFinishRecord(name, time)
 end
 
 local RESULT_ANIM_DURATION = 0.4
-local resultsList = {} -- { {rank=1, name=..., animTimer=...}, ... } -- se muestra TODA la lista, no solo el podio
+local RESULTS_MAX_SLOTS = 15 -- a partir del 16° resultado, se reutiliza el lugar visual del 1°, el 17° el del 2°, etc.
+local resultsSlots = {} -- indexado 1..15; cada slot tiene el ÚLTIMO resultado que le tocó, aunque su rank real sea otro
 
 local function getRankColor(rank)
     if rank == 1 then return rgbm(1.0, 0.78, 0.05, 1) end
@@ -172,7 +173,8 @@ local function settleAndAnnouncePodium(myName)
         if not announcedNames[r.name] then
             announcedNames[r.name] = true
 
-            table.insert(resultsList, { rank = i, name = r.name, animTimer = RESULT_ANIM_DURATION })
+            local slot = ((i - 1) % RESULTS_MAX_SLOTS) + 1
+            resultsSlots[slot] = { rank = i, name = r.name, animTimer = RESULT_ANIM_DURATION }
 
             if i == 1 then
                 raceWon = true
@@ -194,7 +196,7 @@ local function settleAndAnnouncePodium(myName)
                     table.insert(pendingChats, "🏁 " .. r.name .. " terminó en P" .. i .. "!")
                 end
             end
-            ac.log("[ANNOUNCE] Resultado confirmado: " .. r.name .. " -> P" .. i)
+            ac.log("[ANNOUNCE] Resultado confirmado: " .. r.name .. " -> P" .. i .. " (slot " .. slot .. ")")
         end
     end
 end
@@ -281,7 +283,7 @@ ac.onSessionStart(function()
     fastestLap.timeMs = nil
     fastestLap.animTimer = 0
     fastestLap.displayTimer = 0
-    resultsList = {}
+    resultsSlots = {}
     podiumBanner.timer = 0
     podiumBannerQueue = {}
     prevLapCount = nil
@@ -487,36 +489,39 @@ function script.drawUI()
     local rowHeight = 34
     local panelWidth = 260
 
-    for i, entry in ipairs(resultsList) do
-        local t = 1 - (entry.animTimer / RESULT_ANIM_DURATION)
-        local eased = easeOutCubic(t)
-        local slide = (1 - eased) * 70
+    for slot = 1, RESULTS_MAX_SLOTS do
+        local entry = resultsSlots[slot]
+        if entry then
+            local t = 1 - (entry.animTimer / RESULT_ANIM_DURATION)
+            local eased = easeOutCubic(t)
+            local slide = (1 - eased) * 70
 
-        local rowY = resultsY + (i - 1) * rowHeight
-        local x = screen.w - panelWidth - 20 + slide
-        local color = getRankColor(entry.rank)
+            local rowY = resultsY + (slot - 1) * rowHeight
+            local x = screen.w - panelWidth - 20 + slide
+            local color = getRankColor(entry.rank)
 
-        ui.drawRectFilled(vec2(x, rowY), vec2(x + panelWidth, rowY + rowHeight - 4), rgbm(0.04, 0.04, 0.05, 0.90), 4)
+            ui.drawRectFilled(vec2(x, rowY), vec2(x + panelWidth, rowY + rowHeight - 4), rgbm(0.04, 0.04, 0.05, 0.90), 4)
 
-        local badgeSize = 22
-        local badgeX = x + 6
-        local badgeY = rowY + (rowHeight - 4 - badgeSize) * 0.5
-        ui.drawRectFilled(vec2(badgeX, badgeY), vec2(badgeX + badgeSize, badgeY + badgeSize), color, 3)
-        ui.pushFont(ui.Font.Small)
-        local rankText = tostring(entry.rank)
-        local rankTextSize = ui.measureText(rankText)
-        ui.setCursor(vec2(badgeX + (badgeSize - rankTextSize.x) * 0.5, badgeY + (badgeSize - rankTextSize.y) * 0.5))
-        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, 1))
-        ui.text(rankText)
-        ui.popStyleColor()
-        ui.popFont()
+            local badgeSize = 22
+            local badgeX = x + 6
+            local badgeY = rowY + (rowHeight - 4 - badgeSize) * 0.5
+            ui.drawRectFilled(vec2(badgeX, badgeY), vec2(badgeX + badgeSize, badgeY + badgeSize), color, 3)
+            ui.pushFont(ui.Font.Small)
+            local rankText = tostring(entry.rank) -- muestra el puesto REAL (ej "16"), aunque esté en el lugar visual del 1
+            local rankTextSize = ui.measureText(rankText)
+            ui.setCursor(vec2(badgeX + (badgeSize - rankTextSize.x) * 0.5, badgeY + (badgeSize - rankTextSize.y) * 0.5))
+            ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.05, 0.05, 0.05, 1))
+            ui.text(rankText)
+            ui.popStyleColor()
+            ui.popFont()
 
-        ui.pushFont(ui.Font.Small)
-        ui.setCursor(vec2(badgeX + badgeSize + 10, rowY + (rowHeight - 4) * 0.5 - 8))
-        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
-        ui.text(string.upper(entry.name))
-        ui.popStyleColor()
-        ui.popFont()
+            ui.pushFont(ui.Font.Small)
+            ui.setCursor(vec2(badgeX + badgeSize + 10, rowY + (rowHeight - 4) * 0.5 - 8))
+            ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
+            ui.text(string.upper(entry.name))
+            ui.popStyleColor()
+            ui.popFont()
+        end
     end
 end
 
@@ -539,8 +544,9 @@ function script.update(dt)
         fastestLap.displayTimer = math.max(fastestLap.displayTimer - dt, 0)
     end
 
-    for _, entry in ipairs(resultsList) do
-        if entry.animTimer > 0 then
+    for slot = 1, RESULTS_MAX_SLOTS do
+        local entry = resultsSlots[slot]
+        if entry and entry.animTimer > 0 then
             entry.animTimer = math.max(entry.animTimer - dt, 0)
         end
     end
@@ -574,7 +580,7 @@ function script.update(dt)
         fastestLap.timeMs = nil
         fastestLap.animTimer = 0
         fastestLap.displayTimer = 0
-        resultsList = {}
+        resultsSlots = {}
         podiumBanner.timer = 0
         podiumBannerQueue = {}
         prevLapCount = 0 -- CRÍTICO: sin esto, la condición de arriba se queda pegada en true para siempre
