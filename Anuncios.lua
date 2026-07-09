@@ -353,11 +353,10 @@ function script.drawUI()
         local panelWidth = textSize.x + 80
         local panelHeight = 60
         local x = (screen.w - panelWidth) * 0.5
-        local y = 0
+        local y = 34 -- debajo del aviso nativo "LEADER IS ON FINAL LAP", sin superponerse
 
-        -- Fondo totalmente opaco (sin transparencia) para tapar por completo el aviso
-        -- nativo "LEADER IS ON FINAL LAP" que aparece en la misma zona de la pantalla.
-        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.05, 0.05, a >= 0.5 and 1 or 0.9 * a))
+        -- Fondo con transparencia normal: ya no busca tapar nada, solo mostrarse debajo
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.05, 0.05, 0.9 * a))
         ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
         ui.text(text)
@@ -380,7 +379,7 @@ function script.drawUI()
         local panelWidth = 620
         local panelHeight = 96
         local x = (screen.w - panelWidth) * 0.5
-        local y = 90 -- debajo del cartel de última vuelta, para no superponerse
+        local y = 105 -- debajo del cartel de última vuelta, para no superponerse
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
