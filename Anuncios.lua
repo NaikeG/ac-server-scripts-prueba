@@ -350,12 +350,14 @@ function script.drawUI()
         ui.pushFont(ui.Font.Title)
         local text = "🏁  ÚLTIMA VUELTA"
         local textSize = ui.measureText(text)
-        local panelWidth = textSize.x + 56
-        local panelHeight = 52
+        local panelWidth = textSize.x + 80
+        local panelHeight = 60
         local x = (screen.w - panelWidth) * 0.5
         local y = 0
 
-        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.10, 0.10, 0.10, 0.9 * a))
+        -- Fondo totalmente opaco (sin transparencia) para tapar por completo el aviso
+        -- nativo "LEADER IS ON FINAL LAP" que aparece en la misma zona de la pantalla.
+        ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.05, 0.05, a >= 0.5 and 1 or 0.9 * a))
         ui.setCursor(vec2(x + (panelWidth - textSize.x) * 0.5, y + (panelHeight - textSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
         ui.text(text)
