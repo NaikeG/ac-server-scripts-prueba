@@ -10,6 +10,31 @@ local function msToTimeString(ms)
     return string.format("%d:%06.3f", minutes, seconds)
 end
 
+-- ===== Diagnóstico: encontrar el campo de "está en boxes" =====
+-- Para filtrar falsos positivos: si a alguien lo teletransportan a boxes por una sanción,
+-- el juego puede contar eso como si hubiera cruzado la meta. Si detectamos que está en
+-- boxes justo en ese momento, no lo contamos como llegada real.
+local inPitField = nil
+local function findInPitField()
+    local candidates = { "isInPit", "isInPitlane", "inPitlane", "inPit", "isInPitLane", "isInPitBox" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "boolean" then
+            ac.log("[ANNOUNCE] Campo de pits encontrado: car." .. name .. " = " .. tostring(val))
+            inPitField = name
+            return
+        end
+    end
+    ac.log("[ANNOUNCE] No se encontró campo de pits -> no se puede filtrar falsos positivos por teletransporte a boxes")
+end
+
+local function isCarInPit()
+    if inPitField == nil then return false end
+    local ok, val = pcall(function() return car[inPitField] end)
+    if ok and val == true then return true end
+    return false
+end
+
 -- ===== Diagnóstico: encontrar el campo de "cantidad total de vueltas de la carrera" =====
 local totalLapsField = nil
 local totalLapsFieldSource = nil -- "sim", "car" o "config"
@@ -288,6 +313,7 @@ end
 ac.onOnlineWelcome(function(message, config)
     findTotalLapsField(config)
     findLapTimeField()
+    findInPitField()
     requestBestLapSyncEvent({})
 end)
 
@@ -616,7 +642,7 @@ function script.update(dt)
     -- en el frame donde se incrementa el contador de vueltas.
     local totalLaps = getTotalLaps()
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
-    if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
+    if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced and not isCarInPit() then
         myFinishAnnounced = true
         local myFinishTime = sim.currentSessionTime
         addFinishRecord(car:driverName(), myFinishTime)
@@ -663,7 +689,7 @@ function script.update(dt)
         -- porque este bloque confirmadamente se ejecuta con el valor correcto de car.lapCount
         -- justo en el momento en que se completa la vuelta, sin depender de que otro chequeo
         -- llegue a tiempo antes de un posible reset/teletransporte.
-        if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced then
+        if raceLapsSeenZero and isRaceSession and totalLaps ~= nil and car.lapCount >= totalLaps and not myFinishAnnounced and not isCarInPit() then
             myFinishAnnounced = true
             local myFinishTime = sim.currentSessionTime
             addFinishRecord(car:driverName(), myFinishTime)
