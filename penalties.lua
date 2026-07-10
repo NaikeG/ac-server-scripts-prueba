@@ -81,6 +81,31 @@ local function isCarInPit()
     return false
 end
 
+-- ===== Diagnóstico: acceso a OTROS autos (nunca lo probamos en este proyecto, todo lo demás
+-- solo miraba el auto propio con ac.getCar(0)). Necesario para armar la detección aproximada
+-- de bandera azul: "hay un auto más rápido cerca por detrás".
+local function diagnoseOtherCars()
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    ac.log("[PENALTIES] sim.carsCount = " .. tostring(okCount and carsCount or "no se pudo leer"))
+    if not okCount then return end
+
+    local okPos, myPos = pcall(function() return car.position end)
+    ac.log("[PENALTIES] car.position = " .. tostring(okPos and myPos or "no existe"))
+
+    for i = 0, math.min(carsCount - 1, 5) do -- solo los primeros 6 autos, para no saturar el log
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okLap, lapCount = pcall(function() return otherCar.lapCount end)
+            local okOtherPos, otherPos = pcall(function() return otherCar.position end)
+            local okName, name = pcall(function() return otherCar:driverName() end)
+            ac.log("[PENALTIES] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): lapCount=" ..
+                tostring(okLap and lapCount or "no existe") .. ", position=" .. tostring(okOtherPos and otherPos or "no existe"))
+        else
+            ac.log("[PENALTIES] Auto " .. i .. ": no se pudo obtener con ac.getCar(" .. i .. ")")
+        end
+    end
+end
+
 -- ===== Cartel en pantalla (mismo estilo F1 usado en announcements.lua: fondo negro, marco de color) =====
 local banner = { label = "", value = "", color = rgbm(1, 1, 1, 1), timer = 0, alpha = 0 }
 
@@ -196,6 +221,7 @@ ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findBlueFlagField()
     findInPitField()
+    diagnoseOtherCars()
 
     blueFlagSoundURL = config:get("PENALTIES", "BLUEFLAG_SOUND_URL", "")
     soundVolumeMultiplier = config:get("PENALTIES", "SOUND_VOLUME_MULTIPLIER", 2.5)
