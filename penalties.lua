@@ -92,16 +92,20 @@ local function diagnoseOtherCars()
     local okPos, myPos = pcall(function() return car.position end)
     ac.log("[PENALTIES] car.position = " .. tostring(okPos and myPos or "no existe"))
 
-    for i = 0, math.min(carsCount - 1, 5) do -- solo los primeros 6 autos, para no saturar el log
+    -- Recorre TODOS los índices, pero solo loguea los que tengan un piloto real conectado
+    -- (nombre no vacío), para no llenar el log con los ~40 lugares vacíos del servidor.
+    for i = 0, carsCount - 1 do
         local okOther, otherCar = pcall(function() return ac.getCar(i) end)
         if okOther and otherCar then
-            local okLap, lapCount = pcall(function() return otherCar.lapCount end)
-            local okOtherPos, otherPos = pcall(function() return otherCar.position end)
             local okName, name = pcall(function() return otherCar:driverName() end)
-            ac.log("[PENALTIES] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): lapCount=" ..
-                tostring(okLap and lapCount or "no existe") .. ", position=" .. tostring(okOtherPos and otherPos or "no existe"))
-        else
-            ac.log("[PENALTIES] Auto " .. i .. ": no se pudo obtener con ac.getCar(" .. i .. ")")
+            if okName and name ~= nil and name ~= "" then
+                local okLap, lapCount = pcall(function() return otherCar.lapCount end)
+                local okOtherPos, otherPos = pcall(function() return otherCar.position end)
+                local okConnected, isConnected = pcall(function() return otherCar.isConnected end)
+                ac.log("[PENALTIES] Auto " .. i .. " (" .. name .. "): lapCount=" ..
+                    tostring(okLap and lapCount or "no existe") .. ", position=" .. tostring(okOtherPos and otherPos or "no existe") ..
+                    ", isConnected=" .. tostring(okConnected and isConnected or "no existe"))
+            end
         end
     end
 end
