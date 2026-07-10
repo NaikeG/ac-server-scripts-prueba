@@ -32,16 +32,24 @@ end
 -- ===== Diagnóstico: campo de bandera azul =====
 local blueFlagField = nil
 local function findBlueFlagField()
-    local candidates = { "isUnderBlueFlag", "blueFlag", "hasBlueFlag", "underBlueFlag", "showBlueFlag" }
+    local candidates = {
+        "isUnderBlueFlag", "blueFlag", "hasBlueFlag", "underBlueFlag", "showBlueFlag",
+        "isBlueFlag", "blueFlagShown", "blueFlagActive", "flagBlue"
+    }
+    ac.log("[PENALTIES] --- Probando todos los campos de bandera azul candidatos ---")
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        ac.log("[PENALTIES] car." .. name .. " = " .. tostring(ok and val or "no existe"))
+    end
     for _, name in ipairs(candidates) do
         local ok, val = pcall(function() return car[name] end)
         if ok and type(val) == "boolean" then
-            ac.log("[PENALTIES] Campo de bandera azul encontrado: car." .. name .. " = " .. tostring(val))
             blueFlagField = name
+            ac.log("[PENALTIES] Usando car." .. name .. " para la bandera azul")
             return
         end
     end
-    ac.log("[PENALTIES] No se encontró campo de bandera azul -> ese aviso queda desactivado")
+    ac.log("[PENALTIES] No se encontró ningún campo de bandera azul -> ese aviso queda desactivado")
 end
 
 local function isUnderBlueFlag()
@@ -82,6 +90,28 @@ local function showBanner(label, value, color, duration)
     banner.color = color
     banner.timer = duration
 end
+
+-- ===== Arrastre manual con click sostenido, igual que el resto de los carteles del proyecto =====
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+local BANNER_WIDTH = 620
+local BANNER_HEIGHT = 96
+local bannerPosCfg = ac.storage({
+    posX = (screen.w - 620) * 0.5 / screen.w,
+    posY = 200 / 1080
+})
+local bannerDragging = false
+local bannerDragOffsetX, bannerDragOffsetY = 0, 0
 
 local pendingChats = {}
 
@@ -130,6 +160,14 @@ scPenaltyActiveEvent = ac.OnlineEvent({
     else
         penaltyActiveCount = math.max(0, penaltyActiveCount - 1)
     end
+end,
+ac.SharedNamespace.ServerScript)
+
+-- Aviso visual para TODOS los clientes de quién está sancionado, no solo el propio infractor
+scPenaltyBannerEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("SC Penalty Banner")
+}, function(sender, message)
+    showBanner("SANCIÓN", sender:driverName() .. " - NO DEVOLVIÓ LA POSICIÓN", rgbm(0.85, 0.15, 0.15, 1), 6)
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -195,10 +233,35 @@ function script.drawUI()
     if banner.alpha > 0 then
         local a = banner.alpha
         local c = banner.color
-        local panelWidth = 620
-        local panelHeight = 96
-        local x = (screen.w - panelWidth) * 0.5
-        local y = 200 -- más abajo, para no chocar con los carteles de announcements.lua
+        local panelWidth = BANNER_WIDTH
+        local panelHeight = BANNER_HEIGHT
+
+        local baseX = bannerPosCfg.posX * screen.w
+        local baseY = bannerPosCfg.posY * screen.h
+
+        local mp = getMousePos()
+        local mouseIsDown = isMouseButtonDown()
+        if mp ~= nil then
+            local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
+            if not bannerDragging and mouseIsDown and overPanel then
+                bannerDragging = true
+                bannerDragOffsetX = mp.x - baseX
+                bannerDragOffsetY = mp.y - baseY
+            end
+            if bannerDragging then
+                if mouseIsDown then
+                    baseX = mp.x - bannerDragOffsetX
+                    baseY = mp.y - bannerDragOffsetY
+                    bannerPosCfg.posX = baseX / screen.w
+                    bannerPosCfg.posY = baseY / screen.h
+                else
+                    bannerDragging = false
+                end
+            end
+        end
+
+        local x = baseX
+        local y = baseY
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
@@ -294,6 +357,7 @@ function script.update(dt)
                     scPenaltyActiveEvent({ active = true })
 
                     showBanner("SANCIÓN", car:driverName() .. " - NO DEVOLVIÓ LA POSICIÓN", rgbm(0.85, 0.15, 0.15, 1), 6)
+                    scPenaltyBannerEvent({}) -- para que el cartel se vea también en la pantalla de todos los demás
                     table.insert(pendingChats, "🚫 " .. car:driverName() .. " sancionado (caja bloqueada) por no devolver la posición bajo Safety Car")
 
                     if currentPos ~= nil then
