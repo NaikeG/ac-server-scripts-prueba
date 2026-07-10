@@ -7,6 +7,18 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
+-- ===== Modo de edición: mismo evento que en announcements.lua, así el botón de "Acomodar
+-- Carteles" afecta a los carteles de los dos scripts a la vez. =====
+local previewMode = false
+
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
 -- ===== Diagnóstico: campo de posición en carrera (para sanción de adelantamiento bajo SC) =====
 local positionField = nil
 local function findPositionField()
@@ -443,9 +455,11 @@ function script.drawUI()
     end
     pendingChats = {}
 
-    if banner.alpha > 0 then
-        local a = banner.alpha
-        local c = banner.color
+    if banner.alpha > 0 or previewMode then
+        local a = previewMode and 1 or banner.alpha
+        local c = previewMode and rgbm(1.0, 0.65, 0.0, 1) or banner.color
+        local labelToShow = previewMode and "ADELANTAMIENTO BAJO SAFETY CAR" or banner.label
+        local valueToShow = previewMode and "DEVOLVER LA POSICIÓN (15s)" or banner.value
         local panelWidth = BANNER_WIDTH
         local panelHeight = BANNER_HEIGHT
 
@@ -480,7 +494,7 @@ function script.drawUI()
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
 
         ui.pushFont(ui.Font.Small)
-        local labelText = string.upper(banner.label)
+        local labelText = string.upper(labelToShow)
         local labelSize = ui.measureText(labelText)
         ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
@@ -489,7 +503,7 @@ function script.drawUI()
         ui.popFont()
 
         ui.pushFont(ui.Font.Title)
-        local valueText = string.upper(banner.value)
+        local valueText = string.upper(valueToShow)
         local valueSize = ui.measureText(valueText)
         ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
