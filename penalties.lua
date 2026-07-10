@@ -77,74 +77,97 @@ end
 -- ===== Detección aproximada de bandera azul (auto más rápido/adelantado cerca) =====
 -- No hay campo nativo expuesto a Lua para esto, así que lo aproximamos, con distinta lógica
 -- según el tipo de sesión: en Práctica no se muestra nunca; en Clasificación se usa diferencia
--- de velocidad (cada uno hace su vuelta individual, no tiene sentido comparar vueltas de
--- diferencia); en Carrera se usa vueltas de diferencia como antes (te están por doblar).
+-- de velocidad sostenida (para no confundir una frenada puntual en una curva con alguien que
+-- realmente viene mucho más rápido); en Carrera se usa vueltas de diferencia (te están por doblar).
 local BLUEFLAG_DISTANCE_METERS = 60
 local BLUEFLAG_QUALY_SPEED_DIFF_KMH = 30
-local function checkBlueFlagApprox()
-    if isCarInPit() then return false end -- si estoy en boxes, no corresponde bandera azul
+local QUALY_SUSTAIN_SECONDS = 1.5
+local qualySpeedDiffTimer = 0
+
+local function checkBlueFlagApprox(dt)
+    if isCarInPit() then
+        qualySpeedDiffTimer = 0
+        return false
+    end
 
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
     local isQualifySession = (sim.raceSessionType == ac.SessionType.Qualify)
 
     if not isRaceSession and not isQualifySession then
+        qualySpeedDiffTimer = 0
         return false -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
     end
 
     local okCount, carsCount = pcall(function() return sim.carsCount end)
-    if not okCount then return false end
     local okMyPos, myPos = pcall(function() return car.position end)
-    if not okMyPos then return false end
+    local foundCandidate = false
 
-    for i = 1, carsCount - 1 do
-        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
-        if okOther and otherCar then
-            local okConn, connected = pcall(function() return otherCar.isConnected end)
-            if okConn and connected then
-                local otherInPit = false
-                if inPitField ~= nil then
-                    local okOtherPit, val = pcall(function() return otherCar[inPitField] end)
-                    otherInPit = okOtherPit and val == true
-                end
-
-                local okPos, otherPos = pcall(function() return otherCar.position end)
-                local qualifies = false
-
-                if okPos and not otherInPit then
-                    if isRaceSession then
-                        -- Carrera: te están por doblar (al menos una vuelta de diferencia)
-                        local okLap, otherLap = pcall(function() return otherCar.lapCount end)
-                        qualifies = okLap and otherLap > car.lapCount
-                    else
-                        -- Clasificación: mucha diferencia de velocidad (viene en vuelta rápida
-                        -- mientras vos vas más lento, por ejemplo en una vuelta de entrada/salida)
-                        local okSpeed, otherSpeed = pcall(function() return otherCar.speedKmh end)
-                        qualifies = okSpeed and (otherSpeed - car.speedKmh) > BLUEFLAG_QUALY_SPEED_DIFF_KMH
+    if okCount and okMyPos then
+        for i = 1, carsCount - 1 do
+            local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+            if okOther and otherCar then
+                local okConn, connected = pcall(function() return otherCar.isConnected end)
+                if okConn and connected then
+                    local otherInPit = false
+                    if inPitField ~= nil then
+                        local okOtherPit, val = pcall(function() return otherCar[inPitField] end)
+                        otherInPit = okOtherPit and val == true
                     end
-                end
 
-                if qualifies then
-                    local dx = myPos.x - otherPos.x
-                    local dy = myPos.y - otherPos.y
-                    local dz = myPos.z - otherPos.z
-                    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-                    if dist < BLUEFLAG_DISTANCE_METERS then
-                        return true
+                    local okPos, otherPos = pcall(function() return otherCar.position end)
+                    local qualifies = false
+
+                    if okPos and not otherInPit then
+                        if isRaceSession then
+                            local okLap, otherLap = pcall(function() return otherCar.lapCount end)
+                            qualifies = okLap and otherLap > car.lapCount
+                        else
+                            -- Clasificación: diferencia de velocidad, ignorando autos que están
+                            -- en una vuelta invalidada (si cortaron y no cuenta, no corresponde
+                            -- que su velocidad le muestre el cartel a nadie)
+                            local okValid, otherValid = pcall(function() return otherCar.isLapValid end)
+                            local otherLapCountsAsValid = (not okValid) or otherValid
+                            local okSpeed, otherSpeed = pcall(function() return otherCar.speedKmh end)
+                            qualifies = okSpeed and otherLapCountsAsValid and (otherSpeed - car.speedKmh) > BLUEFLAG_QUALY_SPEED_DIFF_KMH
+                        end
+                    end
+
+                    if qualifies then
+                        local dx = myPos.x - otherPos.x
+                        local dy = myPos.y - otherPos.y
+                        local dz = myPos.z - otherPos.z
+                        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                        if dist < BLUEFLAG_DISTANCE_METERS then
+                            foundCandidate = true
+                            break
+                        end
                     end
                 end
             end
         end
     end
-    return false
+
+    if isRaceSession then
+        return foundCandidate -- en Carrera se muestra apenas se detecta, no hace falta sostenido
+    end
+
+    -- En Clasificación, la diferencia de velocidad tiene que sostenerse un rato antes de
+    -- mostrar el cartel, para filtrar frenadas puntuales al entrar a una curva.
+    if foundCandidate then
+        qualySpeedDiffTimer = qualySpeedDiffTimer + dt
+    else
+        qualySpeedDiffTimer = 0
+    end
+    return qualySpeedDiffTimer >= QUALY_SUSTAIN_SECONDS
 end
 
-local function isUnderBlueFlag()
+local function isUnderBlueFlag(dt)
     if blueFlagField ~= nil then
         local ok, val = pcall(function() return car[blueFlagField] end)
         if ok and val == true then return true end
         return false
     end
-    return checkBlueFlagApprox()
+    return checkBlueFlagApprox(dt)
 end
 
 -- ===== Diagnóstico: acceso a OTROS autos (nunca lo probamos en este proyecto, todo lo demás
@@ -400,7 +423,7 @@ function script.update(dt)
 
     -- Bandera azul: aviso simple (cartel + sonido), sin sanción automática.
     -- Se dispara solo en el momento en que la bandera pasa de apagada a encendida (flanco).
-    local nowUnderBlueFlag = isUnderBlueFlag()
+    local nowUnderBlueFlag = isUnderBlueFlag(dt)
     if nowUnderBlueFlag and not wasUnderBlueFlag then
         showBanner("ATENCIÓN", "DAR PASO A VEHÍCULOS RÁPIDOS", rgbm(0.15, 0.45, 1.0, 1), 5)
         playSound(blueFlagSound, "bandera azul")
