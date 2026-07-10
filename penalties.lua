@@ -74,6 +74,57 @@ local function isCarInPit()
     return false
 end
 
+-- ===== Diagnóstico: campo de "fuera de pista" (para no confundir un incidente ajeno con un
+-- adelantamiento real bajo Safety Car) =====
+local offTrackField = nil
+local function findOffTrackField()
+    local candidates = { "isOffTrack", "isOutOfTrack", "outOfTrack", "offTrack", "isOffRoad" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "boolean" then
+            ac.log("[PENALTIES] Campo de fuera de pista encontrado: car." .. name .. " = " .. tostring(val))
+            offTrackField = name
+            return
+        end
+    end
+    ac.log("[PENALTIES] No se encontró campo de fuera de pista -> se usa velocidad muy baja como señal de respaldo")
+end
+
+-- Si CUALQUIER auto conectado (que no esté en boxes) está fuera de pista, o casi detenido,
+-- asumimos que hay un incidente en curso en algún lugar de la pista, y no arrancamos ninguna
+-- advertencia nueva de "adelantamiento bajo SC" mientras eso esté pasando -- para no penalizar
+-- a pilotos inocentes que simplemente pasaron de largo al que tuvo el problema.
+local INCIDENT_SPEED_THRESHOLD_KMH = 15
+local function isAnyoneHavingIncident()
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if not okCount then return false end
+
+    for i = 0, carsCount - 1 do
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okConn, connected = pcall(function() return otherCar.isConnected end)
+            if okConn and connected then
+                local otherInPit = false
+                if inPitField ~= nil then
+                    local okOtherPit, val = pcall(function() return otherCar[inPitField] end)
+                    otherInPit = okOtherPit and val == true
+                end
+
+                if not otherInPit then
+                    if offTrackField ~= nil then
+                        local okOff, isOff = pcall(function() return otherCar[offTrackField] end)
+                        if okOff and isOff then return true end
+                    else
+                        local okSpeed, speed = pcall(function() return otherCar.speedKmh end)
+                        if okSpeed and speed < INCIDENT_SPEED_THRESHOLD_KMH then return true end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- ===== Detección aproximada de bandera azul (auto más rápido/adelantado cerca) =====
 -- No hay campo nativo expuesto a Lua para esto, así que lo aproximamos, con distinta lógica
 -- según el tipo de sesión: en Práctica no se muestra nunca; en Clasificación se usa diferencia
@@ -314,6 +365,7 @@ ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findBlueFlagField()
     findInPitField()
+    findOffTrackField()
     diagnoseOtherCars()
 
     blueFlagSoundURL = config:get("PENALTIES", "BLUEFLAG_SOUND_URL", "")
@@ -439,7 +491,8 @@ function script.update(dt)
         local currentPos = getRacePosition()
 
         if not overtakeWarningActive then
-            if currentPos ~= nil and lastKnownPosition ~= nil and currentPos < lastKnownPosition and not isAnyoneUnderScPenalty() then
+            if currentPos ~= nil and lastKnownPosition ~= nil and currentPos < lastKnownPosition
+                and not isAnyoneUnderScPenalty() and not isAnyoneHavingIncident() then
                 -- Se detectó una mejora de posición: arranca el aviso, todavía sin sancionar
                 overtakeWarningActive = true
                 overtakeWarningTimer = OVERTAKE_WARNING_SECONDS
