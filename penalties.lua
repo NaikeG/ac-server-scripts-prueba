@@ -334,12 +334,22 @@ local overtakeWarningActive = false
 local overtakeWarningTimer = 0
 local positionBeforeOvertake = nil
 local myGearboxLockEndTime = nil
+-- Queda en true desde que se detecta la infracción hasta que REALMENTE se devuelve la posición,
+-- sin importar cuántos ciclos de aviso+sanción hagan falta. Así el infractor no puede "pagar
+-- una sola sanción" y quedarse con el lugar robado -- sigue bajo la lupa hasta cumplir.
+local owesPosition = false
+local warningBaseText = ""
 
 -- Contador compartido: cuántos autos están cumpliendo la sanción en este momento. Mientras
 -- sea > 0, no se arrancan avisos nuevos para nadie -- si alguien está frenado cumpliendo la
 -- sanción, es normal que otros autos lo pasen, y eso no debe contar como una infracción de ellos.
+-- Además, apenas termina CUALQUIER sanción, se extiende esa misma tregua unos segundos más --
+-- así el piloto que había sido perjudicado tiene margen para recuperar su lugar original sin
+-- que se le dispare un aviso nuevo por "adelantar" a quien lo había pasado ilegalmente.
 local penaltyActiveCount = 0
-local function isAnyoneUnderScPenalty() return penaltyActiveCount > 0 end
+local GRACE_AFTER_PENALTY_SECONDS = 10
+local graceTimer = 0
+local function isAnyoneUnderScPenalty() return penaltyActiveCount > 0 or graceTimer > 0 end
 
 scPenaltyActiveEvent = ac.OnlineEvent({
     key = ac.StructItem.key("SC Overtake Penalty Active"),
@@ -349,6 +359,8 @@ scPenaltyActiveEvent = ac.OnlineEvent({
         penaltyActiveCount = penaltyActiveCount + 1
     else
         penaltyActiveCount = math.max(0, penaltyActiveCount - 1)
+        graceTimer = GRACE_AFTER_PENALTY_SECONDS
+        ac.log("[PENALTIES] Sanción terminada, tregua de " .. GRACE_AFTER_PENALTY_SECONDS .. "s para recuperar posiciones")
     end
 end,
 ac.SharedNamespace.ServerScript)
@@ -371,12 +383,13 @@ safetyCarEvent = ac.OnlineEvent({
         ac.log("[PENALTIES] Safety Car activado, posición de referencia: " .. tostring(lastKnownPosition))
     else
         lastKnownPosition = nil
-        -- Si se apaga el SC en medio de un aviso pendiente, se cancela: ya no aplica sancionar
-        -- algo que pasó bajo un régimen que ya terminó.
-        if overtakeWarningActive then
+        -- Si se apaga el SC en medio de un aviso o una deuda pendiente, se cancela todo: ya no
+        -- aplica sancionar algo que pasó bajo un régimen que ya terminó.
+        if overtakeWarningActive or owesPosition then
             overtakeWarningActive = false
+            owesPosition = false
             banner.timer = 0
-            ac.log("[PENALTIES] Safety Car desactivado con aviso pendiente -> se cancela, sin sanción")
+            ac.log("[PENALTIES] Safety Car desactivado con deuda/aviso pendiente -> se cancela, sin sanción")
         end
     end
 end,
@@ -396,6 +409,7 @@ ac.onOnlineWelcome(function(message, config)
     BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
     INCIDENT_SPEED_THRESHOLD_KMH = config:get("PENALTIES", "INCIDENT_SPEED_THRESHOLD_KMH", 25)
     INCIDENT_MAX_DURATION_SECONDS = config:get("PENALTIES", "INCIDENT_MAX_DURATION_SECONDS", 30)
+    GRACE_AFTER_PENALTY_SECONDS = config:get("PENALTIES", "GRACE_AFTER_PENALTY_SECONDS", 10)
     ac.log("[PENALTIES] sim.raceSessionType = " .. tostring(sim.raceSessionType) ..
         " | ac.SessionType.Race = " .. tostring(ac.SessionType.Race) ..
         " | ac.SessionType.Qualify = " .. tostring(ac.SessionType.Qualify))
@@ -489,6 +503,10 @@ end
 local wasUnderBlueFlag = false
 
 function script.update(dt)
+    if graceTimer > 0 then
+        graceTimer = math.max(graceTimer - dt, 0)
+    end
+
     if banner.timer > 0 then
         banner.timer = banner.timer - dt
         banner.alpha = math.min(banner.alpha + 0.10, 1)
@@ -506,22 +524,30 @@ function script.update(dt)
     end
     wasUnderBlueFlag = nowUnderBlueFlag
 
-    -- Adelantamiento bajo Safety Car: aviso de 15 segundos para devolver la posición
-    -- antes de aplicar la sanción real. No arranca un aviso nuevo si alguien más está
-    -- cumpliendo la sanción en este momento (evita marcar como infractores a los autos
-    -- que simplemente pasan a alguien que está frenado cumpliendo su propia sanción).
+    -- Adelantamiento bajo Safety Car: aviso de 15 segundos para devolver la posición antes de
+    -- sancionar. CLAVE: si tras la sanción todavía no devolvió la posición, se lo vuelve a
+    -- avisar y sancionar de nuevo, las veces que hagan falta -- no alcanza con "pagar una vez"
+    -- y quedarse con el lugar robado.
     if scActive and positionField ~= nil and not isCarInPit() then
         local currentPos = getRacePosition()
 
-        if not overtakeWarningActive then
+        if myGearboxLockEndTime ~= nil then
+            -- Cumpliendo la sanción en este momento: no se evalúa nada más, solo se sigue
+            -- registrando la posición para cuando termine.
+            if currentPos ~= nil then
+                lastKnownPosition = currentPos
+            end
+        elseif not owesPosition then
+            -- Sin deuda pendiente: se busca una infracción NUEVA
             if currentPos ~= nil and lastKnownPosition ~= nil and currentPos < lastKnownPosition
                 and not isAnyoneUnderScPenalty() and not isAnyoneHavingIncident() then
-                -- Se detectó una mejora de posición: arranca el aviso, todavía sin sancionar
+                owesPosition = true
+                positionBeforeOvertake = lastKnownPosition
                 overtakeWarningActive = true
                 overtakeWarningTimer = OVERTAKE_WARNING_SECONDS
-                positionBeforeOvertake = lastKnownPosition
+                warningBaseText = "DEVOLVER LA POSICIÓN"
 
-                showBanner("ADELANTAMIENTO BAJO SAFETY CAR", "DEVOLVER LA POSICIÓN", rgbm(1.0, 0.65, 0.0, 1), 16)
+                showBanner("ADELANTAMIENTO BAJO SAFETY CAR", warningBaseText .. " (" .. OVERTAKE_WARNING_SECONDS .. "s)", rgbm(1.0, 0.65, 0.0, 1), 16)
                 playSound(overtakeWarningSound, "aviso de adelantamiento")
                 table.insert(pendingChats, "⚠️ " .. car:driverName() .. " adelantó bajo Safety Car - tiene " ..
                     OVERTAKE_WARNING_SECONDS .. "s para devolver la posición")
@@ -532,15 +558,19 @@ function script.update(dt)
                 lastKnownPosition = currentPos
             end
         else
-            -- Ya está en aviso: chequea si devolvió la posición o si se le acabó el tiempo
+            -- Con deuda pendiente (ya sea recién detectada o de un ciclo de sanción anterior):
+            -- se chequea si por fin devolvió la posición.
             if currentPos ~= nil and currentPos >= positionBeforeOvertake then
+                owesPosition = false
                 overtakeWarningActive = false
-                banner.timer = 0 -- corta el cartel de aviso de inmediato
-                table.insert(pendingChats, "✅ " .. car:driverName() .. " devolvió la posición, sin sanción")
-                ac.log("[PENALTIES] " .. car:driverName() .. " devolvió la posición a tiempo, sin sanción")
+                banner.timer = 0
+                table.insert(pendingChats, "✅ " .. car:driverName() .. " devolvió la posición, deuda saldada")
+                ac.log("[PENALTIES] " .. car:driverName() .. " devolvió la posición, deuda saldada")
                 lastKnownPosition = currentPos
-            else
+            elseif overtakeWarningActive then
+                -- Aviso en curso: cuenta regresiva normal, con el contador visible en el cartel
                 overtakeWarningTimer = overtakeWarningTimer - dt
+                banner.value = warningBaseText .. " (" .. math.max(math.ceil(overtakeWarningTimer), 0) .. "s)"
                 if overtakeWarningTimer <= 0 then
                     overtakeWarningActive = false
 
@@ -559,11 +589,23 @@ function script.update(dt)
                     showBanner("SANCIÓN", car:driverName() .. " - NO DEVOLVIÓ LA POSICIÓN", rgbm(0.85, 0.15, 0.15, 1), 6)
                     scPenaltyBannerEvent({}) -- para que el cartel se vea también en la pantalla de todos los demás
                     table.insert(pendingChats, "🚫 " .. car:driverName() .. " sancionado (caja bloqueada) por no devolver la posición bajo Safety Car")
-
-                    if currentPos ~= nil then
-                        lastKnownPosition = currentPos
-                    end
                 end
+            else
+                -- Recién terminó una sanción y TODAVÍA no devolvió la posición: se lo vuelve a
+                -- avisar de inmediato, sin esperar una nueva "mejora de posición" (porque no
+                -- está mejorando más, simplemente se quedó con el lugar robado).
+                overtakeWarningActive = true
+                overtakeWarningTimer = OVERTAKE_WARNING_SECONDS
+                warningBaseText = "SIGUE SIN DEVOLVER LA POSICIÓN"
+                showBanner("ADELANTAMIENTO BAJO SAFETY CAR", warningBaseText .. " (" .. OVERTAKE_WARNING_SECONDS .. "s)", rgbm(1.0, 0.65, 0.0, 1), 16)
+                playSound(overtakeWarningSound, "aviso de adelantamiento (reincidencia)")
+                table.insert(pendingChats, "⚠️ " .. car:driverName() .. " sigue sin devolver la posición - " ..
+                    OVERTAKE_WARNING_SECONDS .. "s más antes de otra sanción")
+                ac.log("[PENALTIES] " .. car:driverName() .. " sigue sin devolver la posición tras la sanción, nuevo aviso")
+            end
+
+            if currentPos ~= nil then
+                lastKnownPosition = currentPos
             end
         end
     end
