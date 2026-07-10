@@ -314,27 +314,45 @@ end
 local lapValidField = nil
 local lapValidFieldMeansInvalid = false -- true si el campo se llama tipo "isLapInvalid" (invertido)
 local function findLapValidField()
-    local validCandidates = { "isLapValid", "isValidLap", "lapValid", "lastLapValid" }
+    local validCandidates = {
+        "isLapValid", "isValidLap", "lapValid", "lastLapValid", "isCurrentLapValid",
+        "currentLapValid", "lapIsValid", "isLapValidated"
+    }
+    local invalidCandidates = {
+        "isLapInvalid", "lapInvalidated", "invalidLap", "lapCut", "isLapCut",
+        "currentLapInvalid", "lapInvalid", "isCurrentLapInvalid", "hasCut",
+        "cutTrack", "isOffTrackInvalidation", "lapCutInvalidation"
+    }
+
+    ac.log("[ANNOUNCE] --- Probando todos los campos de validez de vuelta candidatos ---")
+    for _, name in ipairs(validCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        ac.log("[ANNOUNCE] car." .. name .. " = " .. tostring(ok and val or "no existe"))
+    end
+    for _, name in ipairs(invalidCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        ac.log("[ANNOUNCE] car." .. name .. " = " .. tostring(ok and val or "no existe"))
+    end
+
     for _, name in ipairs(validCandidates) do
         local ok, val = pcall(function() return car[name] end)
         if ok and type(val) == "boolean" then
-            ac.log("[ANNOUNCE] Campo de validez de vuelta encontrado: car." .. name .. " = " .. tostring(val))
             lapValidField = name
             lapValidFieldMeansInvalid = false
+            ac.log("[ANNOUNCE] Usando car." .. name .. " (válido=true) para la validez de vuelta")
             return
         end
     end
-    local invalidCandidates = { "isLapInvalid", "lapInvalidated", "invalidLap", "lapCut" }
     for _, name in ipairs(invalidCandidates) do
         local ok, val = pcall(function() return car[name] end)
         if ok and type(val) == "boolean" then
-            ac.log("[ANNOUNCE] Campo de invalidez de vuelta encontrado: car." .. name .. " = " .. tostring(val))
             lapValidField = name
             lapValidFieldMeansInvalid = true
+            ac.log("[ANNOUNCE] Usando car." .. name .. " (inválido=true, se invierte) para la validez de vuelta")
             return
         end
     end
-    ac.log("[ANNOUNCE] No se encontró campo de validez de vuelta -> no se puede filtrar vueltas cortadas de la vuelta rápida")
+    ac.log("[ANNOUNCE] No se encontró ningún campo de validez de vuelta -> no se puede filtrar vueltas cortadas")
 end
 
 local function isLapValid()
