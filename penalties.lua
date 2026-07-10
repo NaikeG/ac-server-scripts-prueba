@@ -94,10 +94,18 @@ end
 -- asumimos que hay un incidente en curso en algún lugar de la pista, y no arrancamos ninguna
 -- advertencia nueva de "adelantamiento bajo SC" mientras eso esté pasando -- para no penalizar
 -- a pilotos inocentes que simplemente pasaron de largo al que tuvo el problema.
-local INCIDENT_SPEED_THRESHOLD_KMH = 15
+-- Tiene un límite de tiempo: si un auto queda detenido/fuera de pista por mucho tiempo (por
+-- ejemplo alguien que abandona sin desconectarse), después de un rato se deja de tratar como
+-- "incidente en curso" para no bloquear la detección para todos los demás indefinidamente.
+local INCIDENT_SPEED_THRESHOLD_KMH = 25
+local INCIDENT_MAX_DURATION_SECONDS = 30
+local incidentStartTimes = {} -- [carIndex] = sim.currentSessionTime en que empezó a verse detenido
+
 local function isAnyoneHavingIncident()
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     if not okCount then return false end
+
+    local anyIncident = false
 
     for i = 0, carsCount - 1 do
         local okOther, otherCar = pcall(function() return ac.getCar(i) end)
@@ -110,19 +118,32 @@ local function isAnyoneHavingIncident()
                     otherInPit = okOtherPit and val == true
                 end
 
+                local looksLikeIncident = false
                 if not otherInPit then
                     if offTrackField ~= nil then
                         local okOff, isOff = pcall(function() return otherCar[offTrackField] end)
-                        if okOff and isOff then return true end
+                        looksLikeIncident = okOff and isOff
                     else
                         local okSpeed, speed = pcall(function() return otherCar.speedKmh end)
-                        if okSpeed and speed < INCIDENT_SPEED_THRESHOLD_KMH then return true end
+                        looksLikeIncident = okSpeed and speed < INCIDENT_SPEED_THRESHOLD_KMH
                     end
+                end
+
+                if looksLikeIncident then
+                    if incidentStartTimes[i] == nil then
+                        incidentStartTimes[i] = sim.currentSessionTime
+                    end
+                    local elapsedSeconds = (sim.currentSessionTime - incidentStartTimes[i]) / 1000
+                    if elapsedSeconds <= INCIDENT_MAX_DURATION_SECONDS then
+                        anyIncident = true
+                    end
+                else
+                    incidentStartTimes[i] = nil
                 end
             end
         end
     end
-    return false
+    return anyIncident
 end
 
 -- ===== Detección aproximada de bandera azul (auto más rápido/adelantado cerca) =====
@@ -373,6 +394,8 @@ ac.onOnlineWelcome(function(message, config)
     GEARBOX_LOCK_SECONDS = config:get("PENALTIES", "GEARBOX_LOCK_SECONDS", 5)
     BLUEFLAG_DISTANCE_METERS = config:get("PENALTIES", "BLUEFLAG_DISTANCE_METERS", 60)
     BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
+    INCIDENT_SPEED_THRESHOLD_KMH = config:get("PENALTIES", "INCIDENT_SPEED_THRESHOLD_KMH", 25)
+    INCIDENT_MAX_DURATION_SECONDS = config:get("PENALTIES", "INCIDENT_MAX_DURATION_SECONDS", 30)
     ac.log("[PENALTIES] sim.raceSessionType = " .. tostring(sim.raceSessionType) ..
         " | ac.SessionType.Race = " .. tostring(ac.SessionType.Race) ..
         " | ac.SessionType.Qualify = " .. tostring(ac.SessionType.Qualify))
