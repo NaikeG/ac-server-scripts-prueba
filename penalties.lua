@@ -85,6 +85,24 @@ end
 
 local pendingChats = {}
 
+-- ===== Sonidos =====
+local blueFlagSoundURL = ""
+local blueFlagSound = nil
+local overtakeWarningSoundURL = ""
+local overtakeWarningSound = nil
+local soundVolumeMultiplier = 2.5
+
+local function playSound(sound, label)
+    if not sound then return end
+    local ok, err = pcall(function()
+        sound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        sound:play()
+    end)
+    if not ok then
+        ac.log("[PENALTIES] ERROR reproduciendo sonido (" .. tostring(label) .. "): " .. tostring(err))
+    end
+end
+
 -- ===== Estado del Safety Car (mismo evento que usa safetyCar.lua) =====
 local scActive = false
 local lastKnownPosition = nil
@@ -136,11 +154,6 @@ safetyCarEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
--- ===== Sonido de bandera azul =====
-local blueFlagSoundURL = ""
-local blueFlagSound = nil
-local soundVolumeMultiplier = 2.5
-
 ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findBlueFlagField()
@@ -156,6 +169,17 @@ ac.onOnlineWelcome(function(message, config)
             ac.log("[PENALTIES] Sonido de bandera azul cargado OK")
         else
             ac.log("[PENALTIES] ERROR cargando sonido de bandera azul: " .. tostring(result))
+        end
+    end
+
+    overtakeWarningSoundURL = config:get("PENALTIES", "OVERTAKE_WARNING_SOUND_URL", "")
+    if overtakeWarningSoundURL ~= "" then
+        local ok, result = pcall(function() return ui.MediaPlayer(overtakeWarningSoundURL) end)
+        if ok then
+            overtakeWarningSound = result
+            ac.log("[PENALTIES] Sonido de aviso de adelantamiento cargado OK")
+        else
+            ac.log("[PENALTIES] ERROR cargando sonido de aviso de adelantamiento: " .. tostring(result))
         end
     end
 end)
@@ -215,15 +239,7 @@ function script.update(dt)
     local nowUnderBlueFlag = isUnderBlueFlag()
     if nowUnderBlueFlag and not wasUnderBlueFlag then
         showBanner("ATENCIÓN", "DAR PASO A VEHÍCULOS RÁPIDOS", rgbm(0.15, 0.45, 1.0, 1), 5)
-        if blueFlagSound then
-            local ok, err = pcall(function()
-                blueFlagSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
-                blueFlagSound:play()
-            end)
-            if not ok then
-                ac.log("[PENALTIES] ERROR reproduciendo sonido de bandera azul: " .. tostring(err))
-            end
-        end
+        playSound(blueFlagSound, "bandera azul")
         ac.log("[PENALTIES] Bandera azul mostrada a " .. car:driverName())
     end
     wasUnderBlueFlag = nowUnderBlueFlag
@@ -243,6 +259,7 @@ function script.update(dt)
                 positionBeforeOvertake = lastKnownPosition
 
                 showBanner("ADELANTAMIENTO BAJO SAFETY CAR", "DEVOLVER LA POSICIÓN", rgbm(1.0, 0.65, 0.0, 1), 16)
+                playSound(overtakeWarningSound, "aviso de adelantamiento")
                 table.insert(pendingChats, "⚠️ " .. car:driverName() .. " adelantó bajo Safety Car - tiene " ..
                     OVERTAKE_WARNING_SECONDS .. "s para devolver la posición")
                 ac.log("[PENALTIES] Aviso de adelantamiento bajo SC para " .. car:driverName() ..
