@@ -482,6 +482,11 @@ local resultsPosCfg = ac.storage({ posX = (screen.w - 280) / screen.w, posY = 13
 local resultsDragging = false
 local resultsDragOffsetX, resultsDragOffsetY = 0, 0
 
+-- Candado compartido: mientras se está arrastrando UN cartel, ningún otro puede empezar a
+-- arrastrarse también, aunque el click caiga sobre los dos al superponerse. Sin esto, al
+-- pasar un cartel por encima de otro, un solo click los agarraba a los dos juntos.
+local anyPanelDragging = false
+
 -- Maneja el arrastre de un cartel genérico: recibe su posCfg, ancho/alto, y si posX
 -- representa el CENTRO (true, para los centrados) o el borde izquierdo (false)
 local function handleDrag(posCfg, dragState, panelWidth, panelHeight, centered)
@@ -492,8 +497,9 @@ local function handleDrag(posCfg, dragState, panelWidth, panelHeight, centered)
     local mouseIsDown = isMouseButtonDown()
     if mp ~= nil then
         local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
-        if not dragState.active and mouseIsDown and overPanel then
+        if not dragState.active and not anyPanelDragging and mouseIsDown and overPanel then
             dragState.active = true
+            anyPanelDragging = true
             dragState.offsetX = mp.x - baseX
             dragState.offsetY = mp.y - baseY
         end
@@ -505,6 +511,7 @@ local function handleDrag(posCfg, dragState, panelWidth, panelHeight, centered)
                 posCfg.posY = baseY / screen.h
             else
                 dragState.active = false
+                anyPanelDragging = false
             end
         end
     end
@@ -612,8 +619,9 @@ function script.drawUI()
         local mouseIsDown = isMouseButtonDown()
         if mp ~= nil then
             local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
-            if not flDragging and mouseIsDown and overPanel then
+            if not flDragging and not anyPanelDragging and mouseIsDown and overPanel then
                 flDragging = true
+                anyPanelDragging = true
                 flDragOffsetX = mp.x - baseX
                 flDragOffsetY = mp.y - baseY
             end
@@ -625,6 +633,7 @@ function script.drawUI()
                     flPosCfg.posY = baseY / screen.h
                 else
                     flDragging = false
+                    anyPanelDragging = false
                 end
             end
         end
