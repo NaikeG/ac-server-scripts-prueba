@@ -52,13 +52,6 @@ local function findBlueFlagField()
     ac.log("[PENALTIES] No se encontró ningún campo de bandera azul -> ese aviso queda desactivado")
 end
 
-local function isUnderBlueFlag()
-    if blueFlagField == nil then return false end
-    local ok, val = pcall(function() return car[blueFlagField] end)
-    if ok and val == true then return true end
-    return false
-end
-
 -- ===== Campo de "está en boxes" (para no disparar sanciones por error dentro de boxes) =====
 local inPitField = nil
 local function findInPitField()
@@ -79,6 +72,79 @@ local function isCarInPit()
     local ok, val = pcall(function() return car[inPitField] end)
     if ok and val == true then return true end
     return false
+end
+
+-- ===== Detección aproximada de bandera azul (auto más rápido/adelantado cerca) =====
+-- No hay campo nativo expuesto a Lua para esto, así que lo aproximamos, con distinta lógica
+-- según el tipo de sesión: en Práctica no se muestra nunca; en Clasificación se usa diferencia
+-- de velocidad (cada uno hace su vuelta individual, no tiene sentido comparar vueltas de
+-- diferencia); en Carrera se usa vueltas de diferencia como antes (te están por doblar).
+local BLUEFLAG_DISTANCE_METERS = 60
+local BLUEFLAG_QUALY_SPEED_DIFF_KMH = 30
+local function checkBlueFlagApprox()
+    if isCarInPit() then return false end -- si estoy en boxes, no corresponde bandera azul
+
+    local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
+    local isQualifySession = (sim.raceSessionType == ac.SessionType.Qualify)
+
+    if not isRaceSession and not isQualifySession then
+        return false -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
+    end
+
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if not okCount then return false end
+    local okMyPos, myPos = pcall(function() return car.position end)
+    if not okMyPos then return false end
+
+    for i = 1, carsCount - 1 do
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okConn, connected = pcall(function() return otherCar.isConnected end)
+            if okConn and connected then
+                local otherInPit = false
+                if inPitField ~= nil then
+                    local okOtherPit, val = pcall(function() return otherCar[inPitField] end)
+                    otherInPit = okOtherPit and val == true
+                end
+
+                local okPos, otherPos = pcall(function() return otherCar.position end)
+                local qualifies = false
+
+                if okPos and not otherInPit then
+                    if isRaceSession then
+                        -- Carrera: te están por doblar (al menos una vuelta de diferencia)
+                        local okLap, otherLap = pcall(function() return otherCar.lapCount end)
+                        qualifies = okLap and otherLap > car.lapCount
+                    else
+                        -- Clasificación: mucha diferencia de velocidad (viene en vuelta rápida
+                        -- mientras vos vas más lento, por ejemplo en una vuelta de entrada/salida)
+                        local okSpeed, otherSpeed = pcall(function() return otherCar.speedKmh end)
+                        qualifies = okSpeed and (otherSpeed - car.speedKmh) > BLUEFLAG_QUALY_SPEED_DIFF_KMH
+                    end
+                end
+
+                if qualifies then
+                    local dx = myPos.x - otherPos.x
+                    local dy = myPos.y - otherPos.y
+                    local dz = myPos.z - otherPos.z
+                    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    if dist < BLUEFLAG_DISTANCE_METERS then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function isUnderBlueFlag()
+    if blueFlagField ~= nil then
+        local ok, val = pcall(function() return car[blueFlagField] end)
+        if ok and val == true then return true end
+        return false
+    end
+    return checkBlueFlagApprox()
 end
 
 -- ===== Diagnóstico: acceso a OTROS autos (nunca lo probamos en este proyecto, todo lo demás
@@ -230,6 +296,11 @@ ac.onOnlineWelcome(function(message, config)
     blueFlagSoundURL = config:get("PENALTIES", "BLUEFLAG_SOUND_URL", "")
     soundVolumeMultiplier = config:get("PENALTIES", "SOUND_VOLUME_MULTIPLIER", 2.5)
     GEARBOX_LOCK_SECONDS = config:get("PENALTIES", "GEARBOX_LOCK_SECONDS", 5)
+    BLUEFLAG_DISTANCE_METERS = config:get("PENALTIES", "BLUEFLAG_DISTANCE_METERS", 60)
+    BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
+    ac.log("[PENALTIES] sim.raceSessionType = " .. tostring(sim.raceSessionType) ..
+        " | ac.SessionType.Race = " .. tostring(ac.SessionType.Race) ..
+        " | ac.SessionType.Qualify = " .. tostring(ac.SessionType.Qualify))
     if blueFlagSoundURL ~= "" then
         local ok, result = pcall(function() return ui.MediaPlayer(blueFlagSoundURL) end)
         if ok then
