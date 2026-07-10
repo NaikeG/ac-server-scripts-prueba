@@ -124,6 +124,29 @@ lapCompletedEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
+-- ===== Sincronización del mejor tiempo al conectarse =====
+-- Sin esto, un piloto que se conecta a mitad de sesión no sabe cuál es el mejor tiempo
+-- ya existente, y su primera vuelta le parece un "récord" aunque sea más lenta que el real.
+requestBestLapSyncEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Request Best Lap Sync")
+}, function(sender, message)
+    if bestLapTimeMs ~= nil then
+        bestLapSyncResponseEvent({ timeMs = bestLapTimeMs })
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+bestLapSyncResponseEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Best Lap Sync Response"),
+    timeMs = ac.StructItem.float()
+}, function(sender, message)
+    if bestLapTimeMs == nil or message.timeMs < bestLapTimeMs then
+        bestLapTimeMs = message.timeMs
+        ac.log("[ANNOUNCE] Mejor tiempo existente sincronizado al conectar: " .. tostring(message.timeMs))
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
 -- Datos visuales de cada puesto del podio
 local PODIUM = {
     [1] = { label = "GANADOR DE LA CARRERA", icon = "🏆", color = rgbm(1.0, 0.78, 0.05, 1) },
@@ -265,6 +288,7 @@ end
 ac.onOnlineWelcome(function(message, config)
     findTotalLapsField(config)
     findLapTimeField()
+    requestBestLapSyncEvent({})
 end)
 
 ac.onSessionStart(function()
