@@ -363,6 +363,11 @@ local function isLapValid()
     return val
 end
 
+-- El campo de validez puede resetearse a "válido" apenas arranca la vuelta nueva, justo antes
+-- de que lleguemos a leerlo en el frame donde se completa la vuelta anterior. Por eso lo
+-- vigilamos en TODOS los frames de la vuelta, no solo en el instante en que termina.
+local currentLapHadInvalidMoment = false
+
 ac.onOnlineWelcome(function(message, config)
     findTotalLapsField(config)
     findLapTimeField()
@@ -391,6 +396,7 @@ ac.onSessionStart(function()
     podiumBanner.timer = 0
     podiumBannerQueue = {}
     prevLapCount = nil
+    currentLapHadInvalidMoment = false
     -- Se "desarma" hasta confirmar que la sesión nueva realmente arrancó en la vuelta 0,
     -- para que un lapCount viejo que todavía no bajó no dispare un falso podio de entrada.
     raceLapsSeenZero = false
@@ -630,6 +636,12 @@ function script.drawUI()
 end
 
 function script.update(dt)
+    -- Vigila la validez de la vuelta en curso en TODOS los frames (ver nota arriba de
+    -- currentLapHadInvalidMoment sobre por qué no alcanza con chequearlo al completar la vuelta)
+    if not isLapValid() then
+        currentLapHadInvalidMoment = true
+    end
+
     if podiumBanner.timer > 0 then
         podiumBanner.timer = podiumBanner.timer - dt
     elseif #podiumBannerQueue > 0 then
@@ -688,6 +700,7 @@ function script.update(dt)
         podiumBanner.timer = 0
         podiumBannerQueue = {}
         prevLapCount = 0 -- CRÍTICO: sin esto, la condición de arriba se queda pegada en true para siempre
+        currentLapHadInvalidMoment = false
         ac.log("[ANNOUNCE] Nueva carrera detectada (lapCount volvió a 0), estado reseteado")
     end
 
@@ -752,8 +765,9 @@ function script.update(dt)
         end
 
         local lapTimeMs = getLastLapTime()
-        local lapValid = isLapValid()
+        local lapValid = not currentLapHadInvalidMoment
         ac.log("[ANNOUNCE] Validez de la vuelta " .. completedLap .. ": " .. tostring(lapValid))
+        currentLapHadInvalidMoment = false -- arranca limpia la vuelta nueva
 
         if lapTimeMs ~= nil and lapValid then
             addLapCandidate(car:driverName(), lapTimeMs)
