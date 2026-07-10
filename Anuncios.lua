@@ -3,6 +3,21 @@ car = ac.getCar(0)
 
 local pendingChats = {}
 
+-- ===== Modo de edición: muestra todos los carteles con contenido de ejemplo para poder
+-- acomodarlos con tranquilidad antes de que arranque la actividad real. Se comparte el mismo
+-- evento con penalties.lua, así un solo botón prende/apaga el modo de edición en todos los
+-- carteles de ambos scripts a la vez. =====
+local previewMode = false
+local adminFlag = ui.OnlineExtraFlags.Admin
+
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
 local function msToTimeString(ms)
     local totalSeconds = ms / 1000
     local minutes = math.floor(totalSeconds / 60)
@@ -374,6 +389,23 @@ ac.onOnlineWelcome(function(message, config)
     findLapValidField()
     findInPitField()
     requestBestLapSyncEvent({})
+
+    if config:get("ANNOUNCE", "PANEL_EDIT_ADMIN_ONLY", 1) == 0 then
+        adminFlag = ui.OnlineExtraFlags.None
+    end
+
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🔧 Acomodar Carteles",
+        function() return true end,
+        nil,
+        function()
+            previewMode = not previewMode
+            panelPreviewEvent({ enabled = previewMode })
+            ac.log("[ANNOUNCE] Modo de edición de carteles: " .. tostring(previewMode))
+        end,
+        adminFlag
+    )
 end)
 
 ac.onSessionStart(function()
@@ -437,6 +469,52 @@ local flPosCfg = ac.storage({
 local flDragging = false
 local flDragOffsetX, flDragOffsetY = 0, 0
 
+-- Posiciones arrastrables de los otros tres carteles (antes fijas)
+local lastLapPosCfg = ac.storage({ posX = 0.5, posY = 34 / 1080 }) -- posX es el CENTRO del cartel acá
+local lastLapDragging = false
+local lastLapDragOffsetX, lastLapDragOffsetY = 0, 0
+
+local podiumPosCfg = ac.storage({ posX = 0.5, posY = 105 / 1080 }) -- posX es el CENTRO del cartel acá
+local podiumDragging = false
+local podiumDragOffsetX, podiumDragOffsetY = 0, 0
+
+local resultsPosCfg = ac.storage({ posX = (screen.w - 280) / screen.w, posY = 130 / 1080 })
+local resultsDragging = false
+local resultsDragOffsetX, resultsDragOffsetY = 0, 0
+
+-- Maneja el arrastre de un cartel genérico: recibe su posCfg, ancho/alto, y si posX
+-- representa el CENTRO (true, para los centrados) o el borde izquierdo (false)
+local function handleDrag(posCfg, dragState, panelWidth, panelHeight, centered)
+    local baseX = centered and (posCfg.posX * screen.w - panelWidth * 0.5) or (posCfg.posX * screen.w)
+    local baseY = posCfg.posY * screen.h
+
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+    if mp ~= nil then
+        local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
+        if not dragState.active and mouseIsDown and overPanel then
+            dragState.active = true
+            dragState.offsetX = mp.x - baseX
+            dragState.offsetY = mp.y - baseY
+        end
+        if dragState.active then
+            if mouseIsDown then
+                baseX = mp.x - dragState.offsetX
+                baseY = mp.y - dragState.offsetY
+                posCfg.posX = centered and ((baseX + panelWidth * 0.5) / screen.w) or (baseX / screen.w)
+                posCfg.posY = baseY / screen.h
+            else
+                dragState.active = false
+            end
+        end
+    end
+    return baseX, baseY
+end
+
+local lastLapDrag = { active = false, offsetX = 0, offsetY = 0 }
+local podiumDrag = { active = false, offsetX = 0, offsetY = 0 }
+local resultsDrag = { active = false, offsetX = 0, offsetY = 0 }
+
 function script.drawUI()
     -- Los mensajes de chat se disparan acá y no en script.update, porque drawUI solo se
     -- ejecuta donde hay pantalla (el cliente), nunca en la copia headless que corre en el
@@ -450,7 +528,7 @@ function script.drawUI()
     -- Cartel de "ÚLTIMA VUELTA" (arriba centrado, estilo "LEADER IS ON FINAL LAP" nativo,
     -- persistente hasta que se confirme el ganador, no por tiempo fijo)
     ------------------------------------------------
-    local showLastLapBanner = raceLastLapAnnounced and not raceWon
+    local showLastLapBanner = (raceLastLapAnnounced and not raceWon) or previewMode
     if showLastLapBanner then
         banner.alpha = math.min(banner.alpha + 0.10, 1)
     else
@@ -464,8 +542,8 @@ function script.drawUI()
         local textSize = ui.measureText(text)
         local panelWidth = textSize.x + 80
         local panelHeight = 60
-        local x = (screen.w - panelWidth) * 0.5
-        local y = 34 -- debajo del aviso nativo "LEADER IS ON FINAL LAP", sin superponerse
+
+        local x, y = handleDrag(lastLapPosCfg, lastLapDrag, panelWidth, panelHeight, true)
 
         -- Fondo con transparencia normal: ya no busca tapar nada, solo mostrarse debajo
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.05, 0.05, 0.9 * a))
@@ -479,7 +557,7 @@ function script.drawUI()
     ------------------------------------------------
     -- Cartel grande centrado del podio (P1/P2/P3), aparece uno atrás del otro
     ------------------------------------------------
-    if podiumBanner.timer > 0 then
+    if podiumBanner.timer > 0 or previewMode then
         podiumBanner.alpha = math.min(podiumBanner.alpha + 0.10, 1)
     else
         podiumBanner.alpha = math.max(podiumBanner.alpha - 0.10, 0)
@@ -487,17 +565,20 @@ function script.drawUI()
 
     if podiumBanner.alpha > 0 then
         local a = podiumBanner.alpha
-        local c = podiumBanner.color
+        local c = previewMode and rgbm(1.0, 0.78, 0.05, 1) or podiumBanner.color
+        local label = previewMode and "GANADOR DE LA CARRERA" or podiumBanner.label
+        local value = previewMode and "PILOTO DE EJEMPLO" or podiumBanner.value
+        local icon = previewMode and "🏆" or podiumBanner.icon
         local panelWidth = 620
         local panelHeight = 96
-        local x = (screen.w - panelWidth) * 0.5
-        local y = 105 -- debajo del cartel de última vuelta, para no superponerse
+
+        local x, y = handleDrag(podiumPosCfg, podiumDrag, panelWidth, panelHeight, true)
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
 
         ui.pushFont(ui.Font.Small)
-        local labelText = (podiumBanner.icon ~= "" and (podiumBanner.icon .. "  ") or "") .. string.upper(podiumBanner.label)
+        local labelText = (icon ~= "" and (icon .. "  ") or "") .. string.upper(label)
         local labelSize = ui.measureText(labelText)
         ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
@@ -506,7 +587,7 @@ function script.drawUI()
         ui.popFont()
 
         ui.pushFont(ui.Font.Title)
-        local valueText = string.upper(podiumBanner.value)
+        local valueText = string.upper(value)
         local valueSize = ui.measureText(valueText)
         ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
@@ -518,7 +599,9 @@ function script.drawUI()
     ------------------------------------------------
     -- Panel de "VUELTA RAPIDA" (arriba a la derecha por defecto, arrastrable, estilo nativo de AC)
     ------------------------------------------------
-    if fastestLap.driver ~= nil and fastestLap.displayTimer > 0 then
+    if (fastestLap.driver ~= nil and fastestLap.displayTimer > 0) or previewMode then
+        local displayDriver = previewMode and "PILOTO DE EJEMPLO" or fastestLap.driver
+        local displayTime = previewMode and 90123 or fastestLap.timeMs
         local panelWidth = 260
         local panelHeight = 70
 
@@ -580,14 +663,14 @@ function script.drawUI()
         ui.pushFont(ui.Font.Main)
         ui.setCursor(vec2(badgeX + badgeSize + 10, y + 30))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
-        ui.text(string.upper(fastestLap.driver))
+        ui.text(string.upper(displayDriver))
         ui.popStyleColor()
         ui.popFont()
 
         ui.pushFont(ui.Font.Small)
         ui.setCursor(vec2(badgeX + badgeSize + 10, y + 48))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.75, 0.75, 0.78, 1))
-        ui.text(msToTimeString(fastestLap.timeMs))
+        ui.text(msToTimeString(displayTime))
         ui.popStyleColor()
         ui.popFont()
     end
@@ -595,19 +678,30 @@ function script.drawUI()
     ------------------------------------------------
     -- Lista de resultados (persistente, crece con cada piloto que llega)
     ------------------------------------------------
-    local resultsY = 130
     local rowHeight = 34
     local panelWidth = 260
+    local listPanelHeightForDrag = rowHeight * (previewMode and 3 or RESULTS_MAX_SLOTS)
+    local resultsX, resultsY = handleDrag(resultsPosCfg, resultsDrag, panelWidth, listPanelHeightForDrag, false)
+
+    -- En modo edición, si todavía no hay resultados reales, se arman 3 filas de ejemplo
+    local displaySlots = resultsSlots
+    if previewMode and #finishRecords == 0 then
+        displaySlots = {
+            [1] = { rank = 1, name = "PILOTO EJEMPLO 1", animTimer = 0 },
+            [2] = { rank = 2, name = "PILOTO EJEMPLO 2", animTimer = 0 },
+            [3] = { rank = 3, name = "PILOTO EJEMPLO 3", animTimer = 0 },
+        }
+    end
 
     for slot = 1, RESULTS_MAX_SLOTS do
-        local entry = resultsSlots[slot]
+        local entry = displaySlots[slot]
         if entry then
             local t = 1 - (entry.animTimer / RESULT_ANIM_DURATION)
             local eased = easeOutCubic(t)
             local slide = (1 - eased) * 70
 
             local rowY = resultsY + (slot - 1) * rowHeight
-            local x = screen.w - panelWidth - 20 + slide
+            local x = resultsX + slide
             local color = getRankColor(entry.rank)
 
             ui.drawRectFilled(vec2(x, rowY), vec2(x + panelWidth, rowY + rowHeight - 4), rgbm(0.04, 0.04, 0.05, 0.90), 4)
