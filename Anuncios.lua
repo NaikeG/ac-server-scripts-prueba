@@ -310,9 +310,45 @@ local function getLastLapTime()
     return nil
 end
 
+-- ===== Diagnóstico: campo de "vuelta inválida" (corte de pista, etc.) =====
+local lapValidField = nil
+local lapValidFieldMeansInvalid = false -- true si el campo se llama tipo "isLapInvalid" (invertido)
+local function findLapValidField()
+    local validCandidates = { "isLapValid", "isValidLap", "lapValid", "lastLapValid" }
+    for _, name in ipairs(validCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "boolean" then
+            ac.log("[ANNOUNCE] Campo de validez de vuelta encontrado: car." .. name .. " = " .. tostring(val))
+            lapValidField = name
+            lapValidFieldMeansInvalid = false
+            return
+        end
+    end
+    local invalidCandidates = { "isLapInvalid", "lapInvalidated", "invalidLap", "lapCut" }
+    for _, name in ipairs(invalidCandidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "boolean" then
+            ac.log("[ANNOUNCE] Campo de invalidez de vuelta encontrado: car." .. name .. " = " .. tostring(val))
+            lapValidField = name
+            lapValidFieldMeansInvalid = true
+            return
+        end
+    end
+    ac.log("[ANNOUNCE] No se encontró campo de validez de vuelta -> no se puede filtrar vueltas cortadas de la vuelta rápida")
+end
+
+local function isLapValid()
+    if lapValidField == nil then return true end -- si no hay campo, no filtramos (mejor que romper la función)
+    local ok, val = pcall(function() return car[lapValidField] end)
+    if not ok then return true end
+    if lapValidFieldMeansInvalid then return not val end
+    return val
+end
+
 ac.onOnlineWelcome(function(message, config)
     findTotalLapsField(config)
     findLapTimeField()
+    findLapValidField()
     findInPitField()
     requestBestLapSyncEvent({})
 end)
@@ -698,8 +734,10 @@ function script.update(dt)
         end
 
         local lapTimeMs = getLastLapTime()
+        local lapValid = isLapValid()
+        ac.log("[ANNOUNCE] Validez de la vuelta " .. completedLap .. ": " .. tostring(lapValid))
 
-        if lapTimeMs ~= nil then
+        if lapTimeMs ~= nil and lapValid then
             addLapCandidate(car:driverName(), lapTimeMs)
             lapCompletedEvent({ lapTimeMs = lapTimeMs, lapNumber = completedLap })
         end
