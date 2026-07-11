@@ -19,8 +19,9 @@ local PANEL_NAMES = {
     [7] = "Vuelta Previa",
     [8] = "Semáforos de Largada",
     [9] = "Largada en Movimiento",
+    [10] = "Navegación a tu Puesto de Grilla",
 }
-local PANEL_COUNT = 9
+local PANEL_COUNT = 10
 
 local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
@@ -957,3 +958,4 @@ function script.update(dt)
         end
     end
 end
+
