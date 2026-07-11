@@ -2,13 +2,15 @@ sim = ac.getSim()
 car = ac.getCar(0)
 local texFilePath = (ac.getFolder(ac.FolderID.Root) .. "\\content\\texture\\")
 
--- ===== Modo de edición compartido: mismo evento que el resto de los scripts del proyecto =====
-local previewMode = false
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
+-- el ID 8 -- solo se muestra cuando el menú lo tiene seleccionado. =====
+local editingPanelId = 0
+local MY_PREVIEW_ID = 8
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
-    enabled = ac.StructItem.boolean()
+    selectedId = ac.StructItem.float()
 }, function(sender, message)
-    previewMode = message.enabled
+    editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -325,7 +327,7 @@ function script.drawUI() -- Panel tipo gantry F1
     end
 
     local phase
-    if previewMode then
+    if editingPanelId == MY_PREVIEW_ID then
         -- Muestra la carcasa con todas las luces encendidas, sin depender del reloj de sesión
         phase = "red"
         for i = 1, lightCount, 1 do
