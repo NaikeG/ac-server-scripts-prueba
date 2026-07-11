@@ -36,6 +36,79 @@ local function shouldHideForDrag()
     return globalDragging and globalDragPanelId ~= MY_PANEL_ID
 end
 
+-- ===== Diagnóstico: captura de la grilla real =====
+-- Cuando arranca una sesión de Carrera, el juego teletransporta a cada auto a su casillero
+-- de grilla correcto. Unos segundos después de ese momento (para que se termine de acomodar
+-- todo el mundo), guardamos la posición de cada auto conectado junto a su puesto de grilla --
+-- así armamos nuestro propio "mapa" de casilleros, sin depender de ningún dato de la pista.
+
+-- Campo de posición en carrera (mismo patrón que usamos en penalties.lua)
+local positionField = nil
+local function findPositionField()
+    local candidates = { "racePosition", "position", "leaderboardPosition", "place", "raceOrder", "racePos", "sessionPosition" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        if ok and type(val) == "number" and val > 0 then
+            ac.log("[FORMATION] Campo de posición encontrado: car." .. name .. " = " .. tostring(val))
+            positionField = name
+            return
+        end
+    end
+    ac.log("[FORMATION] No se encontró campo de posición")
+end
+
+-- Campo de "hacia dónde mira el auto" (para poder armar una flecha más adelante). Nunca lo
+-- probamos en este proyecto -- este diagnóstico es solo para confirmar si existe.
+local lookField = nil
+local function findLookField()
+    local candidates = { "look", "direction", "heading", "carDirection", "forward", "lookVector" }
+    for _, name in ipairs(candidates) do
+        local ok, val = pcall(function() return car[name] end)
+        ac.log("[FORMATION] car." .. name .. " = " .. tostring(ok and val or "no existe"))
+        if ok and val ~= nil and lookField == nil then
+            lookField = name
+        end
+    end
+end
+
+local gridCaptured = false
+local gridCaptureTimer = 0
+local GRID_CAPTURE_DELAY_SECONDS = 4 -- espera a que se termine de acomodar todo el mundo
+
+local function captureGridMap()
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if not okCount then
+        ac.log("[FORMATION] No se pudo leer sim.carsCount para capturar la grilla")
+        return
+    end
+
+    ac.log("[FORMATION] --- Capturando mapa de grilla ---")
+    for i = 0, carsCount - 1 do
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okConn, connected = pcall(function() return otherCar.isConnected end)
+            if okConn and connected then
+                local okName, name = pcall(function() return otherCar:driverName() end)
+                local okPos, pos = pcall(function() return otherCar.position end)
+                local okGrid = false
+                local gridPos = nil
+                if positionField ~= nil then
+                    okGrid, gridPos = pcall(function() return otherCar[positionField] end)
+                end
+                ac.log("[FORMATION] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): grid=" ..
+                    tostring(okGrid and gridPos or "no disponible") .. ", position=" .. tostring(okPos and pos or "no disponible"))
+            end
+        end
+    end
+end
+
+ac.onSessionStart(function()
+    if sim.raceSessionType == ac.SessionType.Race then
+        gridCaptured = false
+        gridCaptureTimer = GRID_CAPTURE_DELAY_SECONDS
+    end
+end)
+
 local state = {
     enabled = false,
     alpha = 0
@@ -71,6 +144,8 @@ ac.onResolutionChange(function()
 end)
 
 ac.onOnlineWelcome(function(message, config)
+    findPositionField()
+    findLookField()
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -95,6 +170,14 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.update(dt)
+    if not gridCaptured and gridCaptureTimer > 0 then
+        gridCaptureTimer = gridCaptureTimer - dt
+        if gridCaptureTimer <= 0 then
+            gridCaptured = true
+            captureGridMap()
+        end
+    end
+
     local speed = 3.5
     if state.enabled or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + dt * speed, 1)
