@@ -306,6 +306,7 @@ local activeLocalDrag = nil -- nil, "vueltaPrevia" o "nav"
 local dragging = false
 local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
+local navDiagTimer = 0
 
 function script.drawUI()
     if state.alpha <= 0 or shouldHideForDrag(MY_PANEL_ID) then
@@ -361,7 +362,24 @@ function script.drawUI()
     local ARROW_ACTIVATION_DISTANCE = 100 -- metros: la flecha recién se activa a esta distancia o menos
     local hasRealTarget = (myGridPosition ~= nil and gridSlotWorldPos[myGridPosition] ~= nil)
     local showNav = (state.enabled and hasRealTarget) or editingPanelId == NAV_PANEL_ID
+
+    -- Diagnóstico throttled (una vez por segundo, para no inundar el log)
+    navDiagTimer = navDiagTimer + 1
+    if navDiagTimer % 60 == 0 then
+        local okT, errT = pcall(function()
+            ac.log("[FORMATION] NAV DIAG: state.enabled=" .. tostring(state.enabled) ..
+                " hasRealTarget=" .. tostring(hasRealTarget) ..
+                " myGridPosition=" .. tostring(myGridPosition) ..
+                " showNav=" .. tostring(showNav) ..
+                " hideForDrag=" .. tostring(shouldHideForDrag(NAV_PANEL_ID)))
+        end)
+        if not okT then
+            ac.log("[FORMATION] NAV DIAG ERROR: " .. tostring(errT))
+        end
+    end
+
     if showNav and not shouldHideForDrag(NAV_PANEL_ID) then
+        local okBlock, errBlock = pcall(function()
         local displayPuesto = editingPanelId == NAV_PANEL_ID and 5 or myGridPosition
         local displayDistance = 0
         local displayArrow = "↑"
@@ -442,5 +460,9 @@ function script.drawUI()
         ui.text(valueText)
         ui.popStyleColor()
         ui.popFont()
+        end) -- cierra el pcall del bloque completo
+        if not okBlock then
+            ac.log("[FORMATION] NAV BLOCK ERROR: " .. tostring(errBlock))
+        end
     end
 end
