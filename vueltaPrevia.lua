@@ -1,5 +1,38 @@
 local sim = ac.getSim()
+local car = ac.getCar(0)
 local adminFlag = ui.OnlineExtraFlags.Admin
+
+-- ===== Modo de edición compartido: mismo evento que announcements.lua/penalties.lua/safetyCar.lua =====
+local previewMode = false
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 7 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 7
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent3 = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
 local state = {
     enabled = false,
     alpha = 0
@@ -60,7 +93,7 @@ end)
 
 function script.update(dt)
     local speed = 3.5
-    if state.enabled then
+    if state.enabled or previewMode then
         state.alpha = math.min(state.alpha + dt * speed, 1)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
@@ -153,7 +186,7 @@ local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
 
 function script.drawUI()
-    if state.alpha <= 0 then
+    if state.alpha <= 0 or shouldHideForDrag() then
         return
     end
 
@@ -175,6 +208,7 @@ function script.drawUI()
             dragging = true
             dragOffsetX = mp.x - blockX
             dragOffsetY = mp.y - blockY
+            panelDragStateEvent3({ dragging = true, panelId = MY_PANEL_ID })
         end
 
         if dragging then
@@ -188,6 +222,7 @@ function script.drawUI()
                 cfg.posY = panelY / screen.h
             else
                 dragging = false
+                panelDragStateEvent3({ dragging = false, panelId = 0 })
             end
         end
     end
