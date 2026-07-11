@@ -476,6 +476,39 @@ local panelPositions = ac.storage({
     resultsY = 130 / 1080,
 })
 
+-- ===== Identificadores globales de cartel, compartidos entre TODOS los scripts del proyecto,
+-- para poder ocultar "todos menos el que se está arrastrando" incluso entre scripts distintos.
+-- 1-4: announcements.lua | 5: penalties.lua | 6: safetyCar.lua | 7: vueltaPrevia.lua
+-- 8: startLights.lua | 9: largadaEnMovimiento.lua
+local PANEL_GLOBAL_ID = {
+    lastLap = 1,
+    podium = 2,
+    flPanel = 3,
+    results = 4,
+}
+
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    -- Solo reacciona a MI PROPIO arrastre, no al de otros jugadores que puedan estar
+    -- editando sus carteles al mismo tiempo -- esto es una preferencia visual personal,
+    -- no algo que deba afectar la pantalla de nadie más.
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+-- Un cartel se oculta si HAY un arrastre en curso Y no es el que se está arrastrando
+local function shouldHideForDrag(id)
+    return globalDragging and globalDragPanelId ~= PANEL_GLOBAL_ID[id]
+end
+
 -- ===== Sistema de arrastre centralizado: un único "dueño" del click a la vez =====
 -- En vez de que cada cartel decida por su cuenta si el click es suyo (lo que podía fallar
 -- si dos hitboxes se superponían), acá se decide en un solo lugar: el PRIMER cartel cuyo
@@ -500,6 +533,7 @@ local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp
                 activeDragTarget = id
                 dragOffsetX = mp.x - baseX
                 dragOffsetY = mp.y - baseY
+                panelDragStateEvent({ dragging = true, panelId = PANEL_GLOBAL_ID[id] })
             end
         end
     elseif activeDragTarget == id then
@@ -510,6 +544,7 @@ local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp
             panelPositions[fieldY] = baseY / screen.h
         else
             activeDragTarget = nil
+            panelDragStateEvent({ dragging = false, panelId = 0 })
         end
     end
 
@@ -536,7 +571,7 @@ function script.drawUI()
         banner.alpha = math.max(banner.alpha - 0.10, 0)
     end
 
-    if banner.alpha > 0 then
+    if banner.alpha > 0 and not shouldHideForDrag("lastLap") then
         local a = banner.alpha
         ui.pushFont(ui.Font.Title)
         local text = "🏁  ÚLTIMA VUELTA"
@@ -566,7 +601,7 @@ function script.drawUI()
         podiumBanner.alpha = math.max(podiumBanner.alpha - 0.10, 0)
     end
 
-    if podiumBanner.alpha > 0 then
+    if podiumBanner.alpha > 0 and not shouldHideForDrag("podium") then
         local a = podiumBanner.alpha
         local c = previewMode and rgbm(1.0, 0.78, 0.05, 1) or podiumBanner.color
         local label = previewMode and "GANADOR DE LA CARRERA" or podiumBanner.label
@@ -604,7 +639,7 @@ function script.drawUI()
     ------------------------------------------------
     -- Panel de "VUELTA RAPIDA" (arriba a la derecha por defecto, arrastrable, estilo nativo de AC)
     ------------------------------------------------
-    if (fastestLap.driver ~= nil and fastestLap.displayTimer > 0) or previewMode then
+    if ((fastestLap.driver ~= nil and fastestLap.displayTimer > 0) or previewMode) and not shouldHideForDrag("flPanel") then
         local displayDriver = previewMode and "PILOTO DE EJEMPLO" or fastestLap.driver
         local displayTime = previewMode and 90123 or fastestLap.timeMs
         local panelWidth = 260
@@ -682,7 +717,7 @@ function script.drawUI()
 
     for slot = 1, RESULTS_MAX_SLOTS do
         local entry = displaySlots[slot]
-        if entry then
+        if entry and not shouldHideForDrag("results") then
             local t = 1 - (entry.animTimer / RESULT_ANIM_DURATION)
             local eased = easeOutCubic(t)
             local slide = (1 - eased) * 70
