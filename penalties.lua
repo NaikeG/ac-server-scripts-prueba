@@ -315,6 +315,27 @@ local bannerPosCfg = ac.storage({
 local bannerDragging = false
 local bannerDragOffsetX, bannerDragOffsetY = 0, 0
 
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 5 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 5
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
 local pendingChats = {}
 
 -- ===== Sonidos =====
@@ -455,7 +476,7 @@ function script.drawUI()
     end
     pendingChats = {}
 
-    if banner.alpha > 0 or previewMode then
+    if (banner.alpha > 0 or previewMode) and not shouldHideForDrag() then
         local a = previewMode and 1 or banner.alpha
         local c = previewMode and rgbm(1.0, 0.65, 0.0, 1) or banner.color
         local labelToShow = previewMode and "ADELANTAMIENTO BAJO SAFETY CAR" or banner.label
@@ -474,6 +495,7 @@ function script.drawUI()
                 bannerDragging = true
                 bannerDragOffsetX = mp.x - baseX
                 bannerDragOffsetY = mp.y - baseY
+                panelDragStateEvent({ dragging = true, panelId = MY_PANEL_ID })
             end
             if bannerDragging then
                 if mouseIsDown then
@@ -483,6 +505,7 @@ function script.drawUI()
                     bannerPosCfg.posY = baseY / screen.h
                 else
                     bannerDragging = false
+                    panelDragStateEvent({ dragging = false, panelId = 0 })
                 end
             end
         end
