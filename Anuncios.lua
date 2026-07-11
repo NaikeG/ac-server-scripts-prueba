@@ -462,65 +462,59 @@ local function getMousePos()
     return nil
 end
 
-local flPosCfg = ac.storage({
-    posX = (screen.w - 280) / screen.w, -- proporción de pantalla, por defecto arriba a la derecha
-    posY = 290 / 1080
+-- Las 4 posiciones van en UNA sola llamada a ac.storage() (no 4 separadas), para eliminar
+-- cualquier posibilidad de que distintas llamadas a ac.storage() con forma parecida terminen
+-- compartiendo el mismo espacio de guardado por error.
+local panelPositions = ac.storage({
+    flX = (screen.w - 280) / screen.w,
+    flY = 290 / 1080,
+    lastLapX = 0.5, -- centro del cartel
+    lastLapY = 34 / 1080,
+    podiumX = 0.5, -- centro del cartel
+    podiumY = 105 / 1080,
+    resultsX = (screen.w - 280) / screen.w,
+    resultsY = 130 / 1080,
 })
-local flDragging = false
-local flDragOffsetX, flDragOffsetY = 0, 0
 
--- Posiciones arrastrables de los otros tres carteles (antes fijas)
-local lastLapPosCfg = ac.storage({ posX = 0.5, posY = 34 / 1080 }) -- posX es el CENTRO del cartel acá
-local lastLapDragging = false
-local lastLapDragOffsetX, lastLapDragOffsetY = 0, 0
+-- ===== Sistema de arrastre centralizado: un único "dueño" del click a la vez =====
+-- En vez de que cada cartel decida por su cuenta si el click es suyo (lo que podía fallar
+-- si dos hitboxes se superponían), acá se decide en un solo lugar: el PRIMER cartel cuyo
+-- rectángulo contiene el click en el momento en que se presiona el mouse se queda con el
+-- arrastre completo, y ningún otro cartel puede "sumarse" hasta soltar el botón.
+local activeDragTarget = nil -- nil, o "flPanel" / "lastLap" / "podium" / "results"
+local dragOffsetX, dragOffsetY = 0, 0
 
-local podiumPosCfg = ac.storage({ posX = 0.5, posY = 105 / 1080 }) -- posX es el CENTRO del cartel acá
-local podiumDragging = false
-local podiumDragOffsetX, podiumDragOffsetY = 0, 0
+-- Devuelve la posición actual (x,y de la esquina superior izquierda) de un cartel, y si
+-- corresponde, actualiza esa posición por el arrastre. "centered" = true si fieldX/fieldY
+-- guardan el CENTRO del cartel en vez del borde izquierdo.
+local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp, mouseIsDown)
+    local baseX = centered and (panelPositions[fieldX] * screen.w - panelWidth * 0.5) or (panelPositions[fieldX] * screen.w)
+    local baseY = panelPositions[fieldY] * screen.h
 
-local resultsPosCfg = ac.storage({ posX = (screen.w - 280) / screen.w, posY = 130 / 1080 })
-local resultsDragging = false
-local resultsDragOffsetX, resultsDragOffsetY = 0, 0
+    if mp == nil then return baseX, baseY end
 
--- Candado compartido: mientras se está arrastrando UN cartel, ningún otro puede empezar a
--- arrastrarse también, aunque el click caiga sobre los dos al superponerse. Sin esto, al
--- pasar un cartel por encima de otro, un solo click los agarraba a los dos juntos.
-local anyPanelDragging = false
-
--- Maneja el arrastre de un cartel genérico: recibe su posCfg, ancho/alto, y si posX
--- representa el CENTRO (true, para los centrados) o el borde izquierdo (false)
-local function handleDrag(posCfg, dragState, panelWidth, panelHeight, centered)
-    local baseX = centered and (posCfg.posX * screen.w - panelWidth * 0.5) or (posCfg.posX * screen.w)
-    local baseY = posCfg.posY * screen.h
-
-    local mp = getMousePos()
-    local mouseIsDown = isMouseButtonDown()
-    if mp ~= nil then
-        local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
-        if not dragState.active and not anyPanelDragging and mouseIsDown and overPanel then
-            dragState.active = true
-            anyPanelDragging = true
-            dragState.offsetX = mp.x - baseX
-            dragState.offsetY = mp.y - baseY
-        end
-        if dragState.active then
-            if mouseIsDown then
-                baseX = mp.x - dragState.offsetX
-                baseY = mp.y - dragState.offsetY
-                posCfg.posX = centered and ((baseX + panelWidth * 0.5) / screen.w) or (baseX / screen.w)
-                posCfg.posY = baseY / screen.h
-            else
-                dragState.active = false
-                anyPanelDragging = false
+    if activeDragTarget == nil then
+        if mouseIsDown then
+            local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
+            if overPanel then
+                activeDragTarget = id
+                dragOffsetX = mp.x - baseX
+                dragOffsetY = mp.y - baseY
             end
         end
+    elseif activeDragTarget == id then
+        if mouseIsDown then
+            baseX = mp.x - dragOffsetX
+            baseY = mp.y - dragOffsetY
+            panelPositions[fieldX] = centered and ((baseX + panelWidth * 0.5) / screen.w) or (baseX / screen.w)
+            panelPositions[fieldY] = baseY / screen.h
+        else
+            activeDragTarget = nil
+        end
     end
+
     return baseX, baseY
 end
-
-local lastLapDrag = { active = false, offsetX = 0, offsetY = 0 }
-local podiumDrag = { active = false, offsetX = 0, offsetY = 0 }
-local resultsDrag = { active = false, offsetX = 0, offsetY = 0 }
 
 function script.drawUI()
     -- Los mensajes de chat se disparan acá y no en script.update, porque drawUI solo se
@@ -550,7 +544,9 @@ function script.drawUI()
         local panelWidth = textSize.x + 80
         local panelHeight = 60
 
-        local x, y = handleDrag(lastLapPosCfg, lastLapDrag, panelWidth, panelHeight, true)
+        local mp = getMousePos()
+        local mouseIsDown = isMouseButtonDown()
+        local x, y = panelXY("lastLap", "lastLapX", "lastLapY", panelWidth, panelHeight, true, mp, mouseIsDown)
 
         -- Fondo con transparencia normal: ya no busca tapar nada, solo mostrarse debajo
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0.05, 0.05, 0.05, 0.9 * a))
@@ -579,7 +575,9 @@ function script.drawUI()
         local panelWidth = 620
         local panelHeight = 96
 
-        local x, y = handleDrag(podiumPosCfg, podiumDrag, panelWidth, panelHeight, true)
+        local mp = getMousePos()
+        local mouseIsDown = isMouseButtonDown()
+        local x, y = panelXY("podium", "podiumX", "podiumY", panelWidth, panelHeight, true, mp, mouseIsDown)
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
@@ -612,31 +610,9 @@ function script.drawUI()
         local panelWidth = 260
         local panelHeight = 70
 
-        local baseX = flPosCfg.posX * screen.w
-        local baseY = flPosCfg.posY * screen.h
-
         local mp = getMousePos()
         local mouseIsDown = isMouseButtonDown()
-        if mp ~= nil then
-            local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
-            if not flDragging and not anyPanelDragging and mouseIsDown and overPanel then
-                flDragging = true
-                anyPanelDragging = true
-                flDragOffsetX = mp.x - baseX
-                flDragOffsetY = mp.y - baseY
-            end
-            if flDragging then
-                if mouseIsDown then
-                    baseX = mp.x - flDragOffsetX
-                    baseY = mp.y - flDragOffsetY
-                    flPosCfg.posX = baseX / screen.w
-                    flPosCfg.posY = baseY / screen.h
-                else
-                    flDragging = false
-                    anyPanelDragging = false
-                end
-            end
-        end
+        local baseX, baseY = panelXY("flPanel", "flX", "flY", panelWidth, panelHeight, false, mp, mouseIsDown)
 
         local t = 1 - (fastestLap.animTimer / FL_ANIM_DURATION)
         local eased = easeOutCubic(t)
@@ -690,7 +666,9 @@ function script.drawUI()
     local rowHeight = 34
     local panelWidth = 260
     local listPanelHeightForDrag = rowHeight * (previewMode and 3 or RESULTS_MAX_SLOTS)
-    local resultsX, resultsY = handleDrag(resultsPosCfg, resultsDrag, panelWidth, listPanelHeightForDrag, false)
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+    local resultsX, resultsY = panelXY("results", "resultsX", "resultsY", panelWidth, listPanelHeightForDrag, false, mp, mouseIsDown)
 
     -- En modo edición, si todavía no hay resultados reales, se arman 3 filas de ejemplo
     local displaySlots = resultsSlots
