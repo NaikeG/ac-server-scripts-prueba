@@ -3,18 +3,33 @@ car = ac.getCar(0)
 
 local pendingChats = {}
 
--- ===== Modo de edición: muestra todos los carteles con contenido de ejemplo para poder
--- acomodarlos con tranquilidad antes de que arranque la actividad real. Se comparte el mismo
--- evento con penalties.lua, así un solo botón prende/apaga el modo de edición en todos los
--- carteles de ambos scripts a la vez. =====
-local previewMode = false
+-- ===== Modo de edición: en vez de mostrar TODOS los carteles a la vez (se superponían y
+-- tapaban unos a otros), se muestra UNO SOLO por vez, elegido con botones de "Siguiente" /
+-- "Anterior" en el menú de admin. 0 = modo apagado. Se comparte el mismo evento con los otros
+-- 5 scripts del proyecto, así el menú controla todos los carteles desde un solo lugar.
+-- Lista completa de IDs: 1-4 acá (announcements.lua) | 5 penalties.lua | 6 safetyCar.lua
+-- | 7 vueltaPrevia.lua | 8 startLights.lua | 9 largadaEnMovimiento.lua
+local PANEL_NAMES = {
+    [1] = "Última Vuelta",
+    [2] = "Podio",
+    [3] = "Vuelta Rápida",
+    [4] = "Lista de Resultados",
+    [5] = "Aviso / Sanción Safety Car",
+    [6] = "Cartel Safety Car",
+    [7] = "Vuelta Previa",
+    [8] = "Semáforos de Largada",
+    [9] = "Largada en Movimiento",
+}
+local PANEL_COUNT = 9
+
+local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
 
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
-    enabled = ac.StructItem.boolean()
+    selectedId = ac.StructItem.float()
 }, function(sender, message)
-    previewMode = message.enabled
+    editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -396,13 +411,44 @@ ac.onOnlineWelcome(function(message, config)
 
     ui.registerOnlineExtra(
         ui.Icons.Warning,
-        "🔧 Acomodar Carteles",
+        "🔧 Acomodar Carteles: Siguiente",
         function() return true end,
         nil,
         function()
-            previewMode = not previewMode
-            panelPreviewEvent({ enabled = previewMode })
-            ac.log("[ANNOUNCE] Modo de edición de carteles: " .. tostring(previewMode))
+            editingPanelId = editingPanelId + 1
+            if editingPanelId > PANEL_COUNT then editingPanelId = 1 end -- vuelve al 1, no se apaga solo
+            panelPreviewEvent({ selectedId = editingPanelId })
+            ac.log("[ANNOUNCE] Editando cartel " .. editingPanelId .. "/" .. PANEL_COUNT .. ": " .. PANEL_NAMES[editingPanelId])
+        end,
+        adminFlag
+    )
+
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🔧 Acomodar Carteles: Anterior",
+        function() return true end,
+        nil,
+        function()
+            if editingPanelId <= 1 then
+                editingPanelId = PANEL_COUNT
+            else
+                editingPanelId = editingPanelId - 1
+            end
+            panelPreviewEvent({ selectedId = editingPanelId })
+            ac.log("[ANNOUNCE] Editando cartel " .. editingPanelId .. "/" .. PANEL_COUNT .. ": " .. PANEL_NAMES[editingPanelId])
+        end,
+        adminFlag
+    )
+
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🔧 Cerrar Modo Edición",
+        function() return true end,
+        nil,
+        function()
+            editingPanelId = 0
+            panelPreviewEvent({ selectedId = 0 })
+            ac.log("[ANNOUNCE] Modo de edición cerrado")
         end,
         adminFlag
     )
@@ -561,10 +607,28 @@ function script.drawUI()
     pendingChats = {}
 
     ------------------------------------------------
+    -- Indicador del modo de edición: qué cartel se está mostrando ahora mismo
+    ------------------------------------------------
+    if editingPanelId > 0 then
+        local text = "EDITANDO CARTEL " .. editingPanelId .. "/" .. PANEL_COUNT .. ": " .. string.upper(PANEL_NAMES[editingPanelId])
+        ui.pushFont(ui.Font.Small)
+        local textSize = ui.measureText(text)
+        local padX, padY = 14, 8
+        local x, y = 20, 20
+        ui.drawRectFilled(vec2(x, y), vec2(x + textSize.x + padX * 2, y + textSize.y + padY * 2), rgbm(0, 0, 0, 0.85), 6)
+        ui.drawRect(vec2(x, y), vec2(x + textSize.x + padX * 2, y + textSize.y + padY * 2), rgbm(0.2, 0.8, 1.0, 1), 6, 0, 2)
+        ui.setCursor(vec2(x + padX, y + padY))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
+        ui.text(text)
+        ui.popStyleColor()
+        ui.popFont()
+    end
+
+    ------------------------------------------------
     -- Cartel de "ÚLTIMA VUELTA" (arriba centrado, estilo "LEADER IS ON FINAL LAP" nativo,
     -- persistente hasta que se confirme el ganador, no por tiempo fijo)
     ------------------------------------------------
-    local showLastLapBanner = (raceLastLapAnnounced and not raceWon) or previewMode
+    local showLastLapBanner = (raceLastLapAnnounced and not raceWon) or editingPanelId == 1
     if showLastLapBanner then
         banner.alpha = math.min(banner.alpha + 0.10, 1)
     else
@@ -595,7 +659,7 @@ function script.drawUI()
     ------------------------------------------------
     -- Cartel grande centrado del podio (P1/P2/P3), aparece uno atrás del otro
     ------------------------------------------------
-    if podiumBanner.timer > 0 or previewMode then
+    if podiumBanner.timer > 0 or editingPanelId == 2 then
         podiumBanner.alpha = math.min(podiumBanner.alpha + 0.10, 1)
     else
         podiumBanner.alpha = math.max(podiumBanner.alpha - 0.10, 0)
@@ -603,10 +667,10 @@ function script.drawUI()
 
     if podiumBanner.alpha > 0 and not shouldHideForDrag("podium") then
         local a = podiumBanner.alpha
-        local c = previewMode and rgbm(1.0, 0.78, 0.05, 1) or podiumBanner.color
-        local label = previewMode and "GANADOR DE LA CARRERA" or podiumBanner.label
-        local value = previewMode and "PILOTO DE EJEMPLO" or podiumBanner.value
-        local icon = previewMode and "🏆" or podiumBanner.icon
+        local c = editingPanelId == 2 and rgbm(1.0, 0.78, 0.05, 1) or podiumBanner.color
+        local label = editingPanelId == 2 and "GANADOR DE LA CARRERA" or podiumBanner.label
+        local value = editingPanelId == 2 and "PILOTO DE EJEMPLO" or podiumBanner.value
+        local icon = editingPanelId == 2 and "🏆" or podiumBanner.icon
         local panelWidth = 620
         local panelHeight = 96
 
@@ -639,9 +703,9 @@ function script.drawUI()
     ------------------------------------------------
     -- Panel de "VUELTA RAPIDA" (arriba a la derecha por defecto, arrastrable, estilo nativo de AC)
     ------------------------------------------------
-    if ((fastestLap.driver ~= nil and fastestLap.displayTimer > 0) or previewMode) and not shouldHideForDrag("flPanel") then
-        local displayDriver = previewMode and "PILOTO DE EJEMPLO" or fastestLap.driver
-        local displayTime = previewMode and 90123 or fastestLap.timeMs
+    if ((fastestLap.driver ~= nil and fastestLap.displayTimer > 0) or editingPanelId == 3) and not shouldHideForDrag("flPanel") then
+        local displayDriver = editingPanelId == 3 and "PILOTO DE EJEMPLO" or fastestLap.driver
+        local displayTime = editingPanelId == 3 and 90123 or fastestLap.timeMs
         local panelWidth = 260
         local panelHeight = 70
 
@@ -700,14 +764,15 @@ function script.drawUI()
     ------------------------------------------------
     local rowHeight = 34
     local panelWidth = 260
-    local listPanelHeightForDrag = rowHeight * (previewMode and 3 or RESULTS_MAX_SLOTS)
+    local isResultsPreview = (editingPanelId == 4)
+    local listPanelHeightForDrag = rowHeight * (isResultsPreview and 3 or RESULTS_MAX_SLOTS)
     local mp = getMousePos()
     local mouseIsDown = isMouseButtonDown()
     local resultsX, resultsY = panelXY("results", "resultsX", "resultsY", panelWidth, listPanelHeightForDrag, false, mp, mouseIsDown)
 
     -- En modo edición, si todavía no hay resultados reales, se arman 3 filas de ejemplo
     local displaySlots = resultsSlots
-    if previewMode and #finishRecords == 0 then
+    if isResultsPreview and #finishRecords == 0 then
         displaySlots = {
             [1] = { rank = 1, name = "PILOTO EJEMPLO 1", animTimer = 0 },
             [2] = { rank = 2, name = "PILOTO EJEMPLO 2", animTimer = 0 },
