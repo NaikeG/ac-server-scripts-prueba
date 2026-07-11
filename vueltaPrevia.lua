@@ -2,13 +2,15 @@ local sim = ac.getSim()
 local car = ac.getCar(0)
 local adminFlag = ui.OnlineExtraFlags.Admin
 
--- ===== Modo de edición compartido: mismo evento que announcements.lua/penalties.lua/safetyCar.lua =====
-local previewMode = false
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
+-- el ID 7 -- solo se muestra cuando el menú lo tiene seleccionado. =====
+local editingPanelId = 0
+local MY_PREVIEW_ID = 7
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
-    enabled = ac.StructItem.boolean()
+    selectedId = ac.StructItem.float()
 }, function(sender, message)
-    previewMode = message.enabled
+    editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -93,7 +95,7 @@ end)
 
 function script.update(dt)
     local speed = 3.5
-    if state.enabled or previewMode then
+    if state.enabled or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + dt * speed, 1)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
