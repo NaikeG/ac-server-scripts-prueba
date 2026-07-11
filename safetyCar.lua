@@ -2,6 +2,17 @@ local sim = ac.getSim()
 local car = ac.getCar(0)
 local adminFlag = ui.OnlineExtraFlags.Admin
 
+-- ===== Modo de edición compartido con announcements.lua/penalties.lua: mismo evento, así
+-- el botón "Acomodar Carteles" también hace aparecer el cartel de Safety Car para ubicarlo. =====
+local previewMode = false
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
 local state = {
     enabled = false,
     alpha = 0
@@ -132,12 +143,17 @@ end)
 
 function script.update(dt)
     local speed = 3.5
-    if state.enabled then
+    if state.enabled or previewMode then
         state.alpha = math.min(state.alpha + dt * speed, 1)
-        applyRestrictorQuiet(restrictorValue)
-        applyBallastQuiet(ballastValue)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
+    end
+
+    -- El restrictor/ballast solo se aplican con la sanción REAL activa, nunca solo por
+    -- estar en modo de edición (no queremos afectar la física mientras se acomodan carteles).
+    if state.enabled then
+        applyRestrictorQuiet(restrictorValue)
+        applyBallastQuiet(ballastValue)
     end
 
     if state.enabled and not activateSoundPlayed and activateSound then
@@ -230,6 +246,27 @@ local function getMousePos()
     return nil
 end
 
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 6 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 6
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent2 = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
 -- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
 local cfg = ac.storage({
     posX = 552 / 1920,  -- proporción de pantalla, no píxeles fijos
@@ -241,7 +278,7 @@ local dragOffsetX, dragOffsetY = 0, 0
 local boxW, boxH = 150, 150
 
 function script.drawUI()
-    if state.alpha <= 0 then
+    if state.alpha <= 0 or shouldHideForDrag() then
         return
     end
 
@@ -258,6 +295,7 @@ function script.drawUI()
             dragging = true
             dragOffsetX = mp.x - boxX
             dragOffsetY = mp.y - boxY
+            panelDragStateEvent2({ dragging = true, panelId = MY_PANEL_ID })
         end
 
         if dragging then
@@ -268,6 +306,7 @@ function script.drawUI()
                 cfg.posY = boxY / screen.h
             else
                 dragging = false
+                panelDragStateEvent2({ dragging = false, panelId = 0 })
             end
         end
     end
@@ -275,4 +314,3 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
-
