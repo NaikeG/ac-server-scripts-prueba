@@ -3,13 +3,15 @@ car = ac.getCar(0)
 
 local adminFlag = ui.OnlineExtraFlags.Admin
 
--- ===== Modo de edición compartido: mismo evento que el resto de los scripts del proyecto =====
-local previewMode = false
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
+-- el ID 9 -- solo se muestra cuando el menú lo tiene seleccionado. =====
+local editingPanelId = 0
+local MY_PREVIEW_ID = 9
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
-    enabled = ac.StructItem.boolean()
+    selectedId = ac.StructItem.float()
 }, function(sender, message)
-    previewMode = message.enabled
+    editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -274,7 +276,7 @@ end
 function script.update(dt)
     -- Fade del conjunto (semáforo + panel)
     local fadeSpeed = 3.5
-    if phase ~= "off" or previewMode then
+    if phase ~= "off" or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + dt * fadeSpeed, 1)
     else
         state.alpha = math.max(state.alpha - dt * fadeSpeed, 0)
@@ -548,7 +550,7 @@ function script.drawUI()
         end
     end
 
-    if phase == "yellow" or previewMode then
+    if phase == "yellow" or editingPanelId == MY_PREVIEW_ID then
         drawInfoPanel(centerX, panelY)
         drawGantry(centerX, gantryY)
     else
