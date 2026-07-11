@@ -75,6 +75,33 @@ local gridCaptured = false
 local gridCaptureTimer = 0
 local GRID_CAPTURE_DELAY_SECONDS = 4 -- espera a que se termine de acomodar todo el mundo
 
+-- Va guardando el último puesto de clasificación válido de cada auto MIENTRAS dura la sesión
+-- de Qualify (ahí racePosition sí se actualiza bien con cada vuelta). Una vez que arranca la
+-- Carrera, este valor queda "congelado" -- no lo seguimos leyendo, porque ya sabemos que en
+-- Carrera se queda pegado en un valor viejo hasta que cada uno cruza la línea de meta.
+local lastKnownGridPosition = {} -- [carIndex] = puesto
+
+local function updateQualifyPositionTracking()
+    if positionField == nil then return end
+    if sim.raceSessionType ~= ac.SessionType.Qualify then return end
+
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if not okCount then return end
+
+    for i = 0, carsCount - 1 do
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okConn, connected = pcall(function() return otherCar.isConnected end)
+            if okConn and connected then
+                local okPos, pos = pcall(function() return otherCar[positionField] end)
+                if okPos and type(pos) == "number" and pos > 0 then
+                    lastKnownGridPosition[i] = pos
+                end
+            end
+        end
+    end
+end
+
 local function captureGridMap()
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     if not okCount then
@@ -90,13 +117,16 @@ local function captureGridMap()
             if okConn and connected then
                 local okName, name = pcall(function() return otherCar:driverName() end)
                 local okPos, pos = pcall(function() return otherCar.position end)
+                local okSpline, splinePos = pcall(function() return otherCar.splinePosition end)
                 local okGrid = false
                 local gridPos = nil
                 if positionField ~= nil then
                     okGrid, gridPos = pcall(function() return otherCar[positionField] end)
                 end
-                ac.log("[FORMATION] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): grid=" ..
-                    tostring(okGrid and gridPos or "no disponible") .. ", position=" .. tostring(okPos and pos or "no disponible"))
+                ac.log("[FORMATION] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): grid(quali_congelado)=" ..
+                    tostring(lastKnownGridPosition[i]) .. ", grid(en_vivo, sabemos que no sirve)=" ..
+                    tostring(okGrid and gridPos or "no disponible") .. ", splinePosition=" ..
+                    tostring(okSpline and splinePos or "no disponible") .. ", position=" .. tostring(okPos and pos or "no disponible"))
             end
         end
     end
@@ -170,6 +200,8 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.update(dt)
+    updateQualifyPositionTracking()
+
     if not gridCaptured and gridCaptureTimer > 0 then
         gridCaptureTimer = gridCaptureTimer - dt
         if gridCaptureTimer <= 0 then
