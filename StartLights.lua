@@ -36,7 +36,8 @@ local function shouldHideForDrag()
     return globalDragging and globalDragPanelId ~= MY_PANEL_ID
 end
 
-local penaltyType = 0 -- -2 for gearbox locked until start, -1 for no Penalty, 0 for teleport to pits, above 0 will be laps to serve drive through.
+local penaltyType = 0 -- -2 for gearbox locked until start, -1 for no Penalty, 0 for gearbox lock reactivo (sin teletransporte), above 0 will be laps to serve drive through.
+local jumpstartGearboxLockSeconds = 5
 
 local URL = ""
 local lightCount = 6
@@ -135,6 +136,7 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     local configCheck = config:mapSection("STARTLIGHTS", { TARGET_RATE_OF_CHANGE = 0, SAMPLE_TIME = 0, DISPLAY_WARNING_FOR = 0 })
     lightsOutMin, lightsOutMax = config:get("STARTLIGHTS", "RANDOM_DELAY_RANGE", 3, 1) * 1000, config:get("STARTLIGHTS", "RANDOM_DELAY_RANGE", 5, 2) * 1000
     penaltyType = config:get("STARTLIGHTS", "PENALTY_TYPE", -1)
+    jumpstartGearboxLockSeconds = config:get("STARTLIGHTS", "JUMPSTART_GEARBOX_LOCK_SECONDS", 5)
     seqDuration, seqStartTime = config:get("STARTLIGHTS", "SEQUENCE_LENGTH", 17) * 1000, config:get("STARTLIGHTS", "SEQUENCE_START", 12) * 1000
     isf1style = config:get("STARTLIGHTS", "F1_STYLE", 0)
     f1delay = config:get("STARTLIGHTS", "F1_STYLE_DELAY", 50)
@@ -255,15 +257,18 @@ function script.update(dt)
     --ac.debug("time to start", startTime + delayTime - sim.currentSessionTime)
     --ac.debug("b", (seqDuration + delayTime - gracePeriod) )
 
-    if startTime + delayTime - sim.currentSessionTime < seqDuration + delayTime - gracePeriod - seqStartTime and startTime + delayTime - sim.currentSessionTime > -5000 and not started then
+    -- Solo se arma la detección de falsa largada a partir de que TODAS las luces (el último
+    -- rojo) están encendidas -- antes de eso, la gente todavía se está acomodando en su
+    -- casillero de grilla, y ese movimiento normal no debería contar como falsa largada.
+    if sim.currentSessionTime >= startTime and startTime + delayTime - sim.currentSessionTime > -5000 and not started then
         if car.speedKmh > 0.5 then
             started = true
             if startTime + delayTime - sim.currentSessionTime > 0 then
                 ac.sendChatMessage(car:driverName() ..
                     " Jumped the start by:" .. math.round(startTime + delayTime - sim.currentSessionTime, 0) .. "ms.")
                 if penaltyType == 0 then
-                    physics.setCarPenalty(ac.PenaltyType.TeleportToPits,
-                        math.round((startTime + delayTime - sim.currentSessionTime) / 1000, 0) + 5)
+                    -- Bloqueo de caja de cambios, sin teletransporte a boxes
+                    physics.lockUserGearboxFor(jumpstartGearboxLockSeconds, true)
                 elseif penaltyType > 0 then
                     physics.setCarPenalty(ac.PenaltyType.MandatoryPits, penaltyType)
                 end
