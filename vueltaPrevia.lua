@@ -32,8 +32,8 @@ panelDragStateEvent3 = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
-local function shouldHideForDrag()
-    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+local function shouldHideForDrag(id)
+    return globalDragging and globalDragPanelId ~= id
 end
 
 -- ===== Diagnóstico: captura de la grilla real =====
@@ -75,32 +75,9 @@ local gridCaptured = false
 local gridCaptureTimer = 0
 local GRID_CAPTURE_DELAY_SECONDS = 4 -- espera a que se termine de acomodar todo el mundo
 
--- Va guardando el último puesto de clasificación válido de cada auto MIENTRAS dura la sesión
--- de Qualify (ahí racePosition sí se actualiza bien con cada vuelta). Una vez que arranca la
--- Carrera, este valor queda "congelado" -- no lo seguimos leyendo, porque ya sabemos que en
--- Carrera se queda pegado en un valor viejo hasta que cada uno cruza la línea de meta.
-local lastKnownGridPosition = {} -- [carIndex] = puesto
-
-local function updateQualifyPositionTracking()
-    if positionField == nil then return end
-    if sim.raceSessionType ~= ac.SessionType.Qualify then return end
-
-    local okCount, carsCount = pcall(function() return sim.carsCount end)
-    if not okCount then return end
-
-    for i = 0, carsCount - 1 do
-        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
-        if okOther and otherCar then
-            local okConn, connected = pcall(function() return otherCar.isConnected end)
-            if okConn and connected then
-                local okPos, pos = pcall(function() return otherCar[positionField] end)
-                if okPos and type(pos) == "number" and pos > 0 then
-                    lastKnownGridPosition[i] = pos
-                end
-            end
-        end
-    end
-end
+-- Mapa final: [puesto de grilla] = posición del mundo (vec3) capturada ahí
+local gridSlotWorldPos = {}
+local myGridPosition = nil
 
 local function captureGridMap()
     local okCount, carsCount = pcall(function() return sim.carsCount end)
@@ -109,27 +86,37 @@ local function captureGridMap()
         return
     end
 
-    ac.log("[FORMATION] --- Capturando mapa de grilla ---")
+    -- Junta a todos los conectados con su splinePosition y posición real
+    local entries = {}
     for i = 0, carsCount - 1 do
         local okOther, otherCar = pcall(function() return ac.getCar(i) end)
         if okOther and otherCar then
             local okConn, connected = pcall(function() return otherCar.isConnected end)
             if okConn and connected then
-                local okName, name = pcall(function() return otherCar:driverName() end)
                 local okPos, pos = pcall(function() return otherCar.position end)
                 local okSpline, splinePos = pcall(function() return otherCar.splinePosition end)
-                local okGrid = false
-                local gridPos = nil
-                if positionField ~= nil then
-                    okGrid, gridPos = pcall(function() return otherCar[positionField] end)
+                local okName, name = pcall(function() return otherCar:driverName() end)
+                if okPos and okSpline then
+                    table.insert(entries, { index = i, name = okName and name or "?", pos = pos, spline = splinePos })
                 end
-                ac.log("[FORMATION] Auto " .. i .. " (" .. tostring(okName and name or "?") .. "): grid(quali_congelado)=" ..
-                    tostring(lastKnownGridPosition[i]) .. ", grid(en_vivo, sabemos que no sirve)=" ..
-                    tostring(okGrid and gridPos or "no disponible") .. ", splinePosition=" ..
-                    tostring(okSpline and splinePos or "no disponible") .. ", position=" .. tostring(okPos and pos or "no disponible"))
             end
         end
     end
+
+    -- Ordena de mayor a menor splinePosition: el que está más adelante en la pista es P1
+    table.sort(entries, function(a, b) return a.spline > b.spline end)
+
+    gridSlotWorldPos = {}
+    myGridPosition = nil
+    ac.log("[FORMATION] --- Mapa de grilla capturado (ordenado por splinePosition) ---")
+    for rank, entry in ipairs(entries) do
+        gridSlotWorldPos[rank] = entry.pos
+        ac.log("[FORMATION] Puesto " .. rank .. ": " .. entry.name .. " (splinePosition=" .. tostring(entry.spline) .. ")")
+        if entry.name == car:driverName() then
+            myGridPosition = rank
+        end
+    end
+    ac.log("[FORMATION] Mi puesto de grilla: " .. tostring(myGridPosition))
 end
 
 ac.onSessionStart(function()
@@ -200,8 +187,6 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.update(dt)
-    updateQualifyPositionTracking()
-
     if not gridCaptured and gridCaptureTimer > 0 then
         gridCaptureTimer = gridCaptureTimer - dt
         if gridCaptureTimer <= 0 then
@@ -216,6 +201,16 @@ function script.update(dt)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
+end
+
+-- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
+-- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
+local function safeAtan2(y, x)
+    local ok, result = pcall(function() return math.atan2(y, x) end)
+    if ok then return result end
+    local ok2, result2 = pcall(function() return math.atan(y, x) end)
+    if ok2 then return result2 end
+    return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
 local function alphaColor(r, g, b, mult)
@@ -299,12 +294,21 @@ local cfg = ac.storage({
     posY = 90 / 1080  -- proporción de pantalla (borde superior del conjunto)
 })
 
+-- Posición del cartel de navegación al puesto de grilla (independiente del combo de arriba)
+local navPosCfg = ac.storage({ posX = 0.5, posY = 340 / 1080 })
+local navDragging = false
+local navDragOffsetX, navDragOffsetY = 0, 0
+
+-- Candado local: como este script tiene 2 carteles (Vuelta Previa y el de navegación al
+-- puesto), evita que un click agarre a los dos si llegan a superponerse.
+local activeLocalDrag = nil -- nil, "vueltaPrevia" o "nav"
+
 local dragging = false
 local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
 
 function script.drawUI()
-    if state.alpha <= 0 or shouldHideForDrag() then
+    if state.alpha <= 0 or shouldHideForDrag(MY_PANEL_ID) then
         return
     end
 
@@ -322,8 +326,9 @@ function script.drawUI()
     if mp ~= nil then
         local overBlock = mp.x >= blockX and mp.x <= blockX + blockWidth and mp.y >= blockY and mp.y <= blockY + blockHeight
 
-        if not dragging and mouseIsDown and overBlock then
+        if not dragging and activeLocalDrag == nil and mouseIsDown and overBlock then
             dragging = true
+            activeLocalDrag = "vueltaPrevia"
             dragOffsetX = mp.x - blockX
             dragOffsetY = mp.y - blockY
             panelDragStateEvent3({ dragging = true, panelId = MY_PANEL_ID })
@@ -340,6 +345,7 @@ function script.drawUI()
                 cfg.posY = panelY / screen.h
             else
                 dragging = false
+                activeLocalDrag = nil
                 panelDragStateEvent3({ dragging = false, panelId = 0 })
             end
         end
@@ -347,4 +353,94 @@ function script.drawUI()
 
     drawInfoPanel(centerX, panelY)
     drawGantry(centerX, gantryY)
+
+    ------------------------------------------------
+    -- Cartel de navegación: "TE CORRESPONDE EL PUESTO N" + flecha + distancia
+    ------------------------------------------------
+    local NAV_PANEL_ID = 10
+    local ARROW_ACTIVATION_DISTANCE = 100 -- metros: la flecha recién se activa a esta distancia o menos
+    local hasRealTarget = (myGridPosition ~= nil and gridSlotWorldPos[myGridPosition] ~= nil)
+    local showNav = (state.enabled and hasRealTarget) or editingPanelId == NAV_PANEL_ID
+    if showNav and not shouldHideForDrag(NAV_PANEL_ID) then
+        local displayPuesto = editingPanelId == NAV_PANEL_ID and 5 or myGridPosition
+        local displayDistance = 0
+        local displayArrow = "↑"
+        local arrowActive = false
+
+        if editingPanelId == NAV_PANEL_ID and not hasRealTarget then
+            displayDistance = 42 -- valor de ejemplo
+            displayArrow = "↗"
+            arrowActive = true
+        else
+            local target = gridSlotWorldPos[myGridPosition]
+            local okLook, look = pcall(function() return car.look end)
+            local dx = target.x - car.position.x
+            local dz = target.z - car.position.z
+            displayDistance = math.sqrt(dx * dx + dz * dz)
+            arrowActive = displayDistance <= ARROW_ACTIVATION_DISTANCE
+            if okLook and look ~= nil then
+                local dot = look.x * dx + look.z * dz
+                local cross = look.x * dz - look.z * dx
+                local angleDeg = math.deg(safeAtan2(cross, dot))
+                if angleDeg < 0 then angleDeg = angleDeg + 360 end
+                local sector = math.floor((angleDeg + 22.5) / 45) % 8
+                local arrows = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" }
+                displayArrow = arrows[sector + 1]
+            end
+        end
+
+        local panelWidth = 340
+        local panelHeight = 90
+        local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
+        local baseY = navPosCfg.posY * screen.h
+
+        if mp ~= nil then
+            local overNav = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
+            if not navDragging and activeLocalDrag == nil and mouseIsDown and overNav then
+                navDragging = true
+                activeLocalDrag = "nav"
+                navDragOffsetX = mp.x - baseX
+                navDragOffsetY = mp.y - baseY
+                panelDragStateEvent3({ dragging = true, panelId = NAV_PANEL_ID })
+            end
+            if navDragging then
+                if mouseIsDown then
+                    baseX = mp.x - navDragOffsetX
+                    baseY = mp.y - navDragOffsetY
+                    navPosCfg.posX = (baseX + panelWidth * 0.5) / screen.w
+                    navPosCfg.posY = baseY / screen.h
+                else
+                    navDragging = false
+                    activeLocalDrag = nil
+                    panelDragStateEvent3({ dragging = false, panelId = 0 })
+                end
+            end
+        end
+
+        ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
+        ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
+
+        ui.pushFont(ui.Font.Small)
+        local label = "TE CORRESPONDE EL PUESTO " .. tostring(displayPuesto)
+        local labelSize = ui.measureText(label)
+        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 12))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
+        ui.text(label)
+        ui.popStyleColor()
+        ui.popFont()
+
+        ui.pushFont(ui.Font.Title)
+        local valueText
+        if arrowActive then
+            valueText = displayArrow .. "  " .. math.floor(displayDistance) .. "m"
+        else
+            valueText = "ACERCÁNDOSE..."
+        end
+        local valueSize = ui.measureText(valueText)
+        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + 42))
+        ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
+        ui.text(valueText)
+        ui.popStyleColor()
+        ui.popFont()
+    end
 end
