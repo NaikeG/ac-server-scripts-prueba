@@ -59,6 +59,16 @@ local f1delay = 100
 local greenHoldTime = 1000 -- ms que se mantienen las luces en verde tras la largada, antes de apagarse
 local maxStartArmWindow = 300000 -- ms: solo se arma el chequeo de falsa largada si la sesión lleva menos de esto (evita teleports random tarde en la carrera)
 
+-- Cola de reenvíos: el mensaje de largada se manda 3 veces en total (una vez al toque, y 2
+-- reenvíos más con una pequeña pausa) para que, si a algún piloto se le pierde una copia del
+-- mensaje por la red, le llegue igual con alguno de los reenvíos. Como el mensaje lleva un
+-- horario ABSOLUTO (no "arrancá ahora"), reenviarlo tal cual no desincroniza nada -- todos
+-- calculan la misma cuenta regresiva real sin importar cuál de las 3 copias les llegó.
+local resendQueue = {}
+local function scheduleResend(payload, delaySeconds)
+    table.insert(resendQueue, { timer = delaySeconds, payload = payload })
+end
+
 -- Colores "flúor" (valores por encima de 1 generan un leve glow/bloom en CSP)
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
 local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
@@ -170,15 +180,18 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
         if debugMode == 1 then
             ac.debug("Settings Dump", tostring(config))
         end
+        local payload
         if isf1style == 0 then
-            triggerStart({
+            payload = {
                 startTime = sim.currentSessionTime + seqDuration,
-                delayTime = math.random(lightsOutMin,
-                    lightsOutMax)
-            })
+                delayTime = math.random(lightsOutMin, lightsOutMax)
+            }
         else
-            triggerStart({ startTime = sim.currentSessionTime + seqDuration, delayTime = 99999999 })
+            payload = { startTime = sim.currentSessionTime + seqDuration, delayTime = 99999999 }
         end
+        triggerStart(payload)
+        scheduleResend(payload, 0.2)
+        scheduleResend(payload, 0.5)
     end, adminFlag)
 
     if isf1style == 1 then
@@ -214,6 +227,15 @@ end)
 ac.debug("!version", "startLights v0.9-verde")
 
 function script.update(dt)
+    for i = #resendQueue, 1, -1 do
+        local item = resendQueue[i]
+        item.timer = item.timer - dt
+        if item.timer <= 0 then
+            triggerStart(item.payload)
+            table.remove(resendQueue, i)
+        end
+    end
+
     if overrideTimer > 0 then
         overrideTimer = overrideTimer - dt
     elseif overrideTimer < 0 and overrideTimer > -1 then
@@ -258,6 +280,11 @@ triggerStart = ac.OnlineEvent({
     startTime = ac.StructItem.float(),
     delayTime = ac.StructItem.float()
 }, function(sender, message)
+    -- Si startTime/delayTime son IDÉNTICOS a los que ya tenía guardados, es un reenvío
+    -- duplicado de la misma orden (no una orden nueva) -- no hay que resetear los sonidos,
+    -- si no los beeps ya reproducidos podrían volver a sonar de más al llegar el reenvío.
+    local isDuplicate = (startTime == message.startTime and delayTime == message.delayTime)
+
     startTime = message.startTime
     delayTime = message.delayTime
     if sim.currentSessionTime < maxStartArmWindow then
@@ -267,10 +294,14 @@ triggerStart = ac.OnlineEvent({
             math.floor(sim.currentSessionTime / 1000) .. "s (fuera de la ventana de seguridad de " ..
             math.floor(maxStartArmWindow / 1000) .. "s). Las luces igual se muestran, pero sin riesgo de teletransporte.")
     end
-    greenSoundPlayed = false
-    for i = 1, lightCount, 1 do
-        prevLightState[i] = false
+
+    if not isDuplicate then
+        greenSoundPlayed = false
+        for i = 1, lightCount, 1 do
+            prevLightState[i] = false
+        end
     end
+
     ac.log("TIME: Start Light Trigger Received at " ..
         ac.lapTimeToString(sim.currentSessionTime, true) ..
         " | " .. ac.lapTimeToString(sim.sessionTimeLeft, true) .. " Remaining." ..
