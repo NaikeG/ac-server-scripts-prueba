@@ -3,6 +3,37 @@ car = ac.getCar(0)
 
 local adminFlag = ui.OnlineExtraFlags.Admin
 
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts del proyecto =====
+local previewMode = false
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 9 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 9
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent5 = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
 -- Fases: "off" | "yellow" (safety car, vel. libre) | "sequence" (roja -> verde, con límite)
 local phase = "off"
 local state = { alpha = 0 }
@@ -243,7 +274,7 @@ end
 function script.update(dt)
     -- Fade del conjunto (semáforo + panel)
     local fadeSpeed = 3.5
-    if phase ~= "off" then
+    if phase ~= "off" or previewMode then
         state.alpha = math.min(state.alpha + dt * fadeSpeed, 1)
     else
         state.alpha = math.max(state.alpha - dt * fadeSpeed, 0)
@@ -476,7 +507,7 @@ local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
 
 function script.drawUI()
-    if state.alpha <= 0 then
+    if state.alpha <= 0 or shouldHideForDrag() then
         return
     end
 
@@ -498,6 +529,7 @@ function script.drawUI()
             dragging = true
             dragOffsetX = mp.x - blockX
             dragOffsetY = mp.y - blockY
+            panelDragStateEvent5({ dragging = true, panelId = MY_PANEL_ID })
         end
 
         if dragging then
@@ -511,11 +543,12 @@ function script.drawUI()
                 posCfg.posY = panelY / screen.h
             else
                 dragging = false
+                panelDragStateEvent5({ dragging = false, panelId = 0 })
             end
         end
     end
 
-    if phase == "yellow" then
+    if phase == "yellow" or previewMode then
         drawInfoPanel(centerX, panelY)
         drawGantry(centerX, gantryY)
     else
