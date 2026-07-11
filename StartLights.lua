@@ -2,6 +2,37 @@ sim = ac.getSim()
 car = ac.getCar(0)
 local texFilePath = (ac.getFolder(ac.FolderID.Root) .. "\\content\\texture\\")
 
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts del proyecto =====
+local previewMode = false
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    previewMode = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 8 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 8
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent4 = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
 local penaltyType = 0 -- -2 for gearbox locked until start, -1 for no Penalty, 0 for teleport to pits, above 0 will be laps to serve drive through.
 
 local URL = ""
@@ -289,8 +320,18 @@ function script.drawUI() -- Panel tipo gantry F1
     --ac.debug("a", sim.currentSessionTime)
     --ac.debug("b", startTime-delayTime-seqStartTime)
 
+    if shouldHideForDrag() then
+        return
+    end
+
     local phase
-    if sim.currentSessionTime < startTime + delayTime then
+    if previewMode then
+        -- Muestra la carcasa con todas las luces encendidas, sin depender del reloj de sesión
+        phase = "red"
+        for i = 1, lightCount, 1 do
+            lightState[i] = true
+        end
+    elseif sim.currentSessionTime < startTime + delayTime then
         -- Secuencia de encendido progresivo en rojo
         phase = "red"
         for i = 1, lightCount, 1 do
@@ -355,6 +396,7 @@ function script.drawUI() -- Panel tipo gantry F1
                 dragging = true
                 dragOffsetX = mp.x - posCfg.offsetX
                 dragOffsetY = mp.y - posCfg.offsetY
+                panelDragStateEvent4({ dragging = true, panelId = MY_PANEL_ID })
             end
             if dragging then
                 if mouseIsDown then
@@ -366,6 +408,7 @@ function script.drawUI() -- Panel tipo gantry F1
                     panelY2 = 256 + vGap / 2 + radius + padding + posCfg.offsetY
                 else
                     dragging = false
+                    panelDragStateEvent4({ dragging = false, panelId = 0 })
                 end
             end
         end
