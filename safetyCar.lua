@@ -10,6 +10,7 @@ panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
     selectedId = ac.StructItem.float()
 }, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
     editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
@@ -315,4 +316,3 @@ function script.drawUI()
     boxW, boxH = drawContent(boxX, boxY)
     drawSidePanel(boxX + boxW + 16, boxY, boxH)
 end
-
