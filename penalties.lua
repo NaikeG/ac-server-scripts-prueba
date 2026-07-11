@@ -7,15 +7,16 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
--- ===== Modo de edición: mismo evento que en announcements.lua, así el botón de "Acomodar
--- Carteles" afecta a los carteles de los dos scripts a la vez. =====
-local previewMode = false
+-- ===== Modo de edición: mismo evento que announcements.lua. Este cartel es el ID 5 -- solo
+-- se muestra con contenido de ejemplo cuando el menú de admin lo tiene seleccionado a él. =====
+local editingPanelId = 0
+local MY_PREVIEW_ID = 5
 
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
-    enabled = ac.StructItem.boolean()
+    selectedId = ac.StructItem.float()
 }, function(sender, message)
-    previewMode = message.enabled
+    editingPanelId = message.selectedId
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -476,11 +477,11 @@ function script.drawUI()
     end
     pendingChats = {}
 
-    if (banner.alpha > 0 or previewMode) and not shouldHideForDrag() then
-        local a = previewMode and 1 or banner.alpha
-        local c = previewMode and rgbm(1.0, 0.65, 0.0, 1) or banner.color
-        local labelToShow = previewMode and "ADELANTAMIENTO BAJO SAFETY CAR" or banner.label
-        local valueToShow = previewMode and "DEVOLVER LA POSICIÓN (15s)" or banner.value
+    if (banner.alpha > 0 or editingPanelId == MY_PREVIEW_ID) and not shouldHideForDrag() then
+        local a = editingPanelId == MY_PREVIEW_ID and 1 or banner.alpha
+        local c = editingPanelId == MY_PREVIEW_ID and rgbm(1.0, 0.65, 0.0, 1) or banner.color
+        local labelToShow = editingPanelId == MY_PREVIEW_ID and "ADELANTAMIENTO BAJO SAFETY CAR" or banner.label
+        local valueToShow = editingPanelId == MY_PREVIEW_ID and "DEVOLVER LA POSICIÓN (15s)" or banner.value
         local panelWidth = BANNER_WIDTH
         local panelHeight = BANNER_HEIGHT
 
