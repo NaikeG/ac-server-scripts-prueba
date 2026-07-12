@@ -348,7 +348,15 @@ function script.drawUI()
     -- distancia), nunca se llega a mandar el aviso de "solté el mouse", y el candado
     -- compartido queda trabado para siempre, ocultando TODOS los carteles de TODOS los
     -- scripts hasta reiniciar.
-    if (dragging or navDragging) and not isMouseButtonDown() then
+    --
+    -- IMPORTANTE: el mouse se lee UNA SOLA VEZ acá arriba, y se reutiliza ese mismo valor
+    -- en todo el resto de la función -- llamar a isMouseButtonDown() de nuevo más abajo
+    -- podía dar un resultado distinto en el mismo cuadro (parpadeo/inconsistencia),
+    -- provocando arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
+    if (dragging or navDragging) and not mouseIsDown then
         dragging = false
         navDragging = false
         activeLocalDrag = nil
@@ -372,9 +380,6 @@ function script.drawUI()
 
     local blockX = centerX - blockWidth * 0.5
     local blockY = panelY
-
-    local mp = getMousePos()
-    local mouseIsDown = isMouseButtonDown()
 
     if mp ~= nil then
         local overBlock = mp.x >= blockX and mp.x <= blockX + blockWidth and mp.y >= blockY and mp.y <= blockY + blockHeight
