@@ -133,6 +133,11 @@ end
 local wasRaceSession = false
 local ARROW_ACTIVATION_DISTANCE = 100 -- metros: el cartel entero recién aparece a esta distancia o menos
 local ARRIVAL_DISTANCE = 2 -- metros: una vez que estás así de cerca (o menos), se apaga el cartel, ya llegaste
+-- Aproximación de "sector 3" usando splinePosition (avance 0-1 en la pista, ya confirmado
+-- que funciona) -- no tenemos un campo de "número de sector" real confirmado en CSP, así
+-- que se aproxima como "último tercio de la vuelta". Si en algún circuito no coincide bien
+-- con el sector 3 real, se puede ajustar el valor en Extra Options.
+local SECTOR3_SPLINE_THRESHOLD = 2 / 3
 -- Una vez que se activa (con la dirección justo hacia adelante), se queda "prendido" y la
 -- flecha puede ir cambiando libremente para guiar ajustes de izquierda/derecha, hasta que
 -- te alejes de nuevo -- así no hace falta seguir mirando exactamente para adelante todo el
@@ -189,6 +194,7 @@ ac.onOnlineWelcome(function(message, config)
     findLookField()
     ARROW_ACTIVATION_DISTANCE = config:get("FORMATION", "ARROW_ACTIVATION_DISTANCE_METERS", 100)
     ARRIVAL_DISTANCE = config:get("FORMATION", "ARRIVAL_DISTANCE_METERS", 2)
+    SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -505,10 +511,14 @@ function script.drawUI()
                 hasArrived = false
             end
         elseif not navActive then
-            -- Todavía no está activo: la condición (cerca y mirando adelante) tiene que
-            -- sostenerse un ratito antes de prender de verdad -- así un cuadro suelto raro
-            -- (por ejemplo justo al cambiar de sesión) no dispara el cartel de la nada.
-            if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "^" then
+            -- Todavía no está activo: la condición (cerca, mirando adelante, Y en el último
+            -- tercio de la vuelta) tiene que sostenerse un ratito antes de prender de verdad
+            -- -- así no se dispara en el sector 1, lejos de la grilla, aunque en algún punto
+            -- del circuito pase cerca y mirando para adelante por casualidad.
+            local okSpline, mySpline = pcall(function() return car.splinePosition end)
+            local inFinalSector = okSpline and mySpline >= SECTOR3_SPLINE_THRESHOLD
+
+            if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "^" and inFinalSector then
                 navActivationTimer = navActivationTimer + navFrameDt
                 if navActivationTimer >= NAV_ACTIVATION_SUSTAIN_SECONDS then
                     navActive = true
