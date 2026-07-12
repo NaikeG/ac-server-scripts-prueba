@@ -359,6 +359,16 @@ function script.drawUI() -- Panel tipo gantry F1
     --ac.debug("a", sim.currentSessionTime)
     --ac.debug("b", startTime-delayTime-seqStartTime)
 
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si el semáforo dejó de ser visible a mitad
+    -- de camino (por ejemplo si terminó la secuencia mientras se estaba moviendo el
+    -- cartel). Sin esto, el candado compartido puede quedar trabado para siempre.
+    if dragging and not isMouseButtonDown() then
+        dragging = false
+        panelDragStateEvent4({ dragging = false, panelId = 0 })
+        ac.log("[STARTLIGHTS] Arrastre liberado por seguridad")
+    end
+
     if shouldHideForDrag() then
         return
     end
