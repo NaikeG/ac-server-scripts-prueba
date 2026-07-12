@@ -173,10 +173,13 @@ local BLUEFLAG_DISTANCE_METERS = 60
 local BLUEFLAG_QUALY_SPEED_DIFF_KMH = 30
 local QUALY_SUSTAIN_SECONDS = 1.5
 local qualySpeedDiffTimer = 0
+local RACE_LAP_SUSTAIN_SECONDS = 1.5 -- filtra el "1 de diferencia" transitorio justo al cruzar la línea de largada tras la Vuelta Previa
+local raceLapDiffTimer = 0
 
 local function checkBlueFlagApprox(dt)
     if isCarInPit() then
         qualySpeedDiffTimer = 0
+        raceLapDiffTimer = 0
         return false
     end
 
@@ -185,6 +188,7 @@ local function checkBlueFlagApprox(dt)
 
     if not isRaceSession and not isQualifySession then
         qualySpeedDiffTimer = 0
+        raceLapDiffTimer = 0
         return false -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
     end
 
@@ -238,7 +242,16 @@ local function checkBlueFlagApprox(dt)
     end
 
     if isRaceSession then
-        return foundCandidate -- en Carrera se muestra apenas se detecta, no hace falta sostenido
+        -- También tiene que sostenerse un rato -- justo al cruzar la línea de largada tras
+        -- la Vuelta Previa, un auto puede figurar momentáneamente "una vuelta arriba" solo
+        -- por el orden en que cada uno cruzó la línea, sin que eso sea una vuelta real de
+        -- diferencia. Sostenerlo filtra ese falso positivo transitorio.
+        if foundCandidate then
+            raceLapDiffTimer = raceLapDiffTimer + dt
+        else
+            raceLapDiffTimer = 0
+        end
+        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS
     end
 
     -- En Clasificación, la diferencia de velocidad tiene que sostenerse un rato antes de
