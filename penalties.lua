@@ -7,12 +7,9 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
--- Fuente más grande disponible (Huge si existe, si no Title)
+-- Fuente usada para el contenido principal del cartel (se probó Huge, pero resultó
+-- demasiado grande -- Title da un buen equilibrio entre legible y compacto)
 local biggestFont = ui.Font.Title
-local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
-if okBigFont and hugeFontExists then
-    biggestFont = ui.Font.Huge
-end
 
 -- ===== Modo de edición: mismo evento que announcements.lua. Este cartel es el ID 5 -- solo
 -- se muestra con contenido de ejemplo cuando el menú de admin lo tiene seleccionado a él. =====
@@ -476,6 +473,15 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.drawUI()
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si el cartel dejó de ser visible a mitad
+    -- de camino. Sin esto, el candado compartido puede quedar trabado para siempre.
+    if bannerDragging and not isMouseButtonDown() then
+        bannerDragging = false
+        panelDragStateEvent({ dragging = false, panelId = 0 })
+        ac.log("[PENALTIES] Arrastre liberado por seguridad")
+    end
+
     -- El chat solo se manda desde acá (drawUI), que no corre en la copia headless del
     -- servidor, para evitar que el mismo aviso se mande dos veces.
     for _, msg in ipairs(pendingChats) do
