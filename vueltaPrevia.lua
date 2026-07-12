@@ -321,13 +321,17 @@ local function getMousePos()
 end
 
 -- Posición guardada por el usuario (persiste entre sesiones, individual por piloto)
-local cfg = ac.storage({
-    posX = 0.5,      -- proporción de pantalla (centro horizontal del conjunto)
-    posY = 90 / 1080  -- proporción de pantalla (borde superior del conjunto)
+-- Las 2 posiciones van en UNA sola llamada a ac.storage() (no 2 separadas), para eliminar
+-- cualquier posibilidad de que ambas terminen compartiendo el mismo espacio de guardado por
+-- tener la misma forma -- es el mismo bug que ya habíamos encontrado y solucionado en
+-- announcements.lua, que acá se había vuelto a colar sin darnos cuenta.
+local panelPositions = ac.storage({
+    comboPosX = 0.5,     -- combo de Vuelta Previa (centro horizontal)
+    comboPosY = 90 / 1080, -- combo de Vuelta Previa (borde superior)
+    navPosX = 0.5,        -- cartel de navegación (centro horizontal)
+    navPosY = 550 / 1080  -- cartel de navegación (borde superior)
 })
 
--- Posición del cartel de navegación al puesto de grilla (independiente del combo de arriba)
-local navPosCfg = ac.storage({ posX = 0.5, posY = 550 / 1080 }) -- más abajo, lejos del combo de arriba
 local navDragging = false
 local navDragOffsetX, navDragOffsetY = 0, 0
 
@@ -384,8 +388,8 @@ function script.drawUI()
     ui.popFont()
     local panelHeight = titleSizeCalc.y + subSizeCalc.y + 22
 
-    local centerX = cfg.posX * screen.w
-    local panelY = cfg.posY * screen.h
+    local centerX = panelPositions.comboPosX * screen.w
+    local panelY = panelPositions.comboPosY * screen.h
     local gantryY = panelY + panelHeight + 20
 
     local blockX = centerX - blockWidth * 0.5
@@ -409,8 +413,8 @@ function script.drawUI()
                 centerX = blockX + blockWidth * 0.5
                 panelY = blockY
                 gantryY = panelY + panelHeight + 20
-                cfg.posX = centerX / screen.w
-                cfg.posY = panelY / screen.h
+                panelPositions.comboPosX = centerX / screen.w
+                panelPositions.comboPosY = panelY / screen.h
             else
                 dragging = false
                 activeLocalDrag = nil
@@ -502,8 +506,8 @@ function script.drawUI()
 
         local panelWidth = math.max(labelSize.x, valueSize.x) + 30
         local panelHeight = labelSize.y + valueSize.y + 22
-        local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
-        local baseY = navPosCfg.posY * screen.h
+        local baseX = panelPositions.navPosX * screen.w - panelWidth * 0.5
+        local baseY = panelPositions.navPosY * screen.h
 
         if mp ~= nil then
             local overNav = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
@@ -518,8 +522,8 @@ function script.drawUI()
                 if mouseIsDown then
                     baseX = mp.x - navDragOffsetX
                     baseY = mp.y - navDragOffsetY
-                    navPosCfg.posX = (baseX + panelWidth * 0.5) / screen.w
-                    navPosCfg.posY = baseY / screen.h
+                    panelPositions.navPosX = (baseX + panelWidth * 0.5) / screen.w
+                    panelPositions.navPosY = baseY / screen.h
                 else
                     navDragging = false
                     activeLocalDrag = nil
