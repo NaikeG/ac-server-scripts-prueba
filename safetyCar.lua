@@ -208,24 +208,26 @@ local function drawContent(originX, originY)
 end
 
 local function drawSidePanel(x, y, height)
-    local panelWidth = 300
     local title = "SAFETY CAR"
     local subtitle = "MANTENER POSICIONES"
+
+    ui.pushFont(ui.Font.Huge)
+    local titleSize = ui.measureText(title)
+    local subSize = ui.measureText(subtitle)
+    ui.popFont()
+
+    local panelWidth = math.max(titleSize.x, subSize.x) + 30
 
     ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(0.03, 0.03, 0.03, 0.92), 10)
     ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(1.0, 0.82, 0.0, 1), 10, 0, 3)
 
-    ui.pushFont(ui.Font.Title)
-    local titleSize = ui.measureText(title)
-    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + (height * 0.5) - titleSize.y - 4))
+    ui.pushFont(ui.Font.Huge)
+    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + (height * 0.5) - titleSize.y - 2))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
     ui.text(title)
     ui.popStyleColor()
-    ui.popFont()
 
-    ui.pushFont(ui.Font.Main)
-    local subSize = ui.measureText(subtitle)
-    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + (height * 0.5) + 6))
+    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + (height * 0.5) + 2))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1, 1, 1))
     ui.text(subtitle)
     ui.popStyleColor()
