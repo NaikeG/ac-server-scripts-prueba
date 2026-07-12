@@ -487,11 +487,16 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        -- Las dos líneas usan la fuente más grande disponible y ocupan todo el alto
-        -- posible del cartel, con el mínimo margen.
+        -- Las dos líneas usan la fuente más grande disponible. Se intenta además escalarlas
+        -- más grandes con setWindowFontScale (función estándar de Dear ImGui, la librería
+        -- que usa CSP por debajo) -- no está confirmado que funcione en este contexto, así
+        -- que va protegido: si falla o no existe, se seguye viendo con el tamaño normal.
+        local TEXT_SCALE = 1.6
+        local scaleOk = pcall(function() ui.setWindowFontScale(TEXT_SCALE) end)
+
         ui.pushFont(biggestFont)
         local label = "POSICION N " .. tostring(displayPuesto)
-        local labelSize = ui.measureText(label)
+        local labelSize = ui.measureText(label) -- si scaleOk, esto YA viene escalado, no hay que multiplicar de nuevo
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
@@ -499,16 +504,18 @@ function script.drawUI()
 
         local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
         local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + panelHeight - valueSize.y - 4))
+        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + labelSize.y + 8))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
         ui.popFont()
 
+        if scaleOk then pcall(function() ui.setWindowFontScale(1.0) end) end
+
         navSizeLogTimer = navSizeLogTimer + 1
         if navSizeLogTimer == 30 then -- se loguea una sola vez, medio segundo después de aparecer
-            ac.log("[FORMATION] Tamaño real del texto: label alto=" .. tostring(labelSize.y) ..
-                "px (referencia: 21px), value alto=" .. tostring(valueSize.y) .. "px (referencia: 21px)")
+            ac.log("[FORMATION] scaleOk=" .. tostring(scaleOk) .. " | Tamaño real: label alto=" ..
+                tostring(labelSize.y) .. "px, value alto=" .. tostring(valueSize.y) .. "px (sin escalar daba 24px)")
         end
         end) -- cierra el pcall del bloque completo
         if not okBlock then
