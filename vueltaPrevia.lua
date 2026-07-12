@@ -237,14 +237,9 @@ local function safeAtan2(y, x)
     return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
--- Se prueba "Huge" (más grande que Title) -- la vez anterior falló porque le faltaban los
--- glifos de tildes y de las flechas unicode, así que ahora el texto usa solo caracteres
--- ASCII simples (sin tildes, flechas tipo ^ > v <) para evitar ese problema.
+-- Se probó "Huge" pero resultó demasiado grande (cartel enorme); se usa Title, que ya
+-- veníamos usando en el resto del proyecto con buenos resultados de legibilidad.
 local biggestFont = ui.Font.Title
-local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
-if okBigFont and hugeFontExists then
-    biggestFont = ui.Font.Huge
-end
 
 local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
@@ -346,6 +341,21 @@ local navDiagTimer = 0
 local navSizeLogTimer = 0
 
 function script.drawUI()
+    -- Chequeo de seguridad INCONDICIONAL, antes que cualquier "return" por visibilidad: si
+    -- yo tenía un cartel en arrastre y el mouse ya no está apretado, lo libero y aviso YA,
+    -- sin importar si ese cartel sigue visible en este momento. Sin esto, si un cartel
+    -- desaparece a mitad de un arrastre (por ejemplo el de navegación, que depende de la
+    -- distancia), nunca se llega a mandar el aviso de "solté el mouse", y el candado
+    -- compartido queda trabado para siempre, ocultando TODOS los carteles de TODOS los
+    -- scripts hasta reiniciar.
+    if (dragging or navDragging) and not isMouseButtonDown() then
+        dragging = false
+        navDragging = false
+        activeLocalDrag = nil
+        panelDragStateEvent3({ dragging = false, panelId = 0 })
+        ac.log("[FORMATION] Arrastre liberado por seguridad (cartel se había ocultado a mitad de camino)")
+    end
+
     if state.alpha <= 0 or shouldHideForDrag(MY_PANEL_ID) then
         return
     end
