@@ -251,28 +251,31 @@ local function alphaColor(r, g, b, mult)
 end
 
 local function drawInfoPanel(centerX, y)
-    local panelWidth = 420
-    local panelHeight = 110
+    ui.pushFont(biggestFont)
+    local titleSize = ui.measureText(title)
+    local subSize = ui.measureText(subtitle)
+    ui.popFont()
+
+    local panelWidth = math.max(titleSize.x, subSize.x) + 30
+    local panelHeight = titleSize.y + subSize.y + 22
     local x = centerX - panelWidth * 0.5
 
     ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0, 0, 0, 0.88), 10)
     ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(1.0, 0.82, 0.0, 1), 10, 0, 3)
 
-    ui.pushFont(ui.Font.Title)
-    local titleSize = ui.measureText(title)
-    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + 18))
+    ui.pushFont(biggestFont)
+    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + 8))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
     ui.text(title)
     ui.popStyleColor()
-    ui.popFont()
 
-    ui.pushFont(ui.Font.Main)
-    local subSize = ui.measureText(subtitle)
-    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + 62))
+    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + titleSize.y + 12))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1, 1, 1))
     ui.text(subtitle)
     ui.popStyleColor()
     ui.popFont()
+
+    return panelWidth, panelHeight
 end
 
 local function drawGantry(centerX, y)
@@ -338,7 +341,7 @@ local activeLocalDrag = nil -- nil, "vueltaPrevia" o "nav"
 
 local dragging = false
 local dragOffsetX, dragOffsetY = 0, 0
-local blockWidth, blockHeight = 420, 226
+local blockWidth, blockHeight = 460, 266 -- área de arrastre; se ajustó al crecer el texto con Huge
 local navDiagTimer = 0
 local navSizeLogTimer = 0
 
@@ -347,7 +350,12 @@ function script.drawUI()
         return
     end
 
-    local panelHeight = 110
+    ui.pushFont(biggestFont)
+    local titleSizeCalc = ui.measureText(title)
+    local subSizeCalc = ui.measureText(subtitle)
+    ui.popFont()
+    local panelHeight = titleSizeCalc.y + subSizeCalc.y + 22
+
     local centerX = cfg.posX * screen.w
     local panelY = cfg.posY * screen.h
     local gantryY = panelY + panelHeight + 20
@@ -460,8 +468,16 @@ function script.drawUI()
 
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
-        local panelWidth = 353
-        local panelHeight = 150
+        local label = "POSICION N " .. tostring(displayPuesto)
+        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
+
+        ui.pushFont(biggestFont)
+        local labelSize = ui.measureText(label)
+        local valueSize = ui.measureText(valueText)
+        ui.popFont()
+
+        local panelWidth = math.max(labelSize.x, valueSize.x) + 30
+        local panelHeight = labelSize.y + valueSize.y + 22
         local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
         local baseY = navPosCfg.posY * screen.h
 
@@ -493,15 +509,11 @@ function script.drawUI()
 
         -- Las dos líneas usan la fuente más grande disponible (Huge si existe, si no Title)
         ui.pushFont(biggestFont)
-        local label = "POSICION N " .. tostring(displayPuesto)
-        local labelSize = ui.measureText(label)
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
         ui.popStyleColor()
 
-        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
-        local valueSize = ui.measureText(valueText)
         ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + labelSize.y + 8))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
