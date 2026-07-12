@@ -604,11 +604,17 @@ local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp
 end
 
 function script.drawUI()
+    -- El mouse se lee UNA SOLA VEZ acá arriba y se reutiliza en toda la función -- llamarlo
+    -- de nuevo más abajo podía dar un resultado distinto en el mismo cuadro, provocando
+    -- arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
     -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
     -- está apretado, se libera YA, sin importar si ese cartel dejó de ser visible a mitad
     -- de camino. Sin esto, el candado compartido puede quedar trabado para siempre,
     -- ocultando todos los carteles de todos los scripts hasta reiniciar.
-    if activeDragTarget ~= nil and not isMouseButtonDown() then
+    if activeDragTarget ~= nil and not mouseIsDown then
         activeDragTarget = nil
         panelDragStateEvent({ dragging = false, panelId = 0 })
         ac.log("[ANNOUNCE] Arrastre liberado por seguridad (cartel se había ocultado a mitad de camino)")
@@ -659,8 +665,6 @@ function script.drawUI()
         local panelWidth = textSize.x + 30
         local panelHeight = textSize.y + 14
 
-        local mp = getMousePos()
-        local mouseIsDown = isMouseButtonDown()
         local x, y = panelXY("lastLap", "lastLapX", "lastLapY", panelWidth, panelHeight, true, mp, mouseIsDown)
 
         -- Fondo con transparencia normal: ya no busca tapar nada, solo mostrarse debajo
@@ -702,8 +706,6 @@ function script.drawUI()
         local panelWidth = math.max(labelSize.x, valueSize.x) + 40
         local panelHeight = labelSize.y + valueSize.y + 26
 
-        local mp = getMousePos()
-        local mouseIsDown = isMouseButtonDown()
         local x, y = panelXY("podium", "podiumX", "podiumY", panelWidth, panelHeight, true, mp, mouseIsDown)
 
         ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(0, 0, 0, 0.85 * a), 10)
@@ -733,8 +735,6 @@ function script.drawUI()
         local panelWidth = 260
         local panelHeight = 70
 
-        local mp = getMousePos()
-        local mouseIsDown = isMouseButtonDown()
         local baseX, baseY = panelXY("flPanel", "flX", "flY", panelWidth, panelHeight, false, mp, mouseIsDown)
 
         local t = 1 - (fastestLap.animTimer / FL_ANIM_DURATION)
@@ -790,8 +790,6 @@ function script.drawUI()
     local panelWidth = 260
     local isResultsPreview = (editingPanelId == 4)
     local listPanelHeightForDrag = rowHeight * (isResultsPreview and 3 or RESULTS_MAX_SLOTS)
-    local mp = getMousePos()
-    local mouseIsDown = isMouseButtonDown()
     local resultsX, resultsY = panelXY("results", "resultsX", "resultsY", panelWidth, listPanelHeightForDrag, false, mp, mouseIsDown)
 
     -- En modo edición, si todavía no hay resultados reales, se arman 3 filas de ejemplo
