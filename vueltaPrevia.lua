@@ -237,6 +237,16 @@ local function safeAtan2(y, x)
     return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
+-- Intenta usar una fuente más grande que Title si existe en esta versión de CSP (nunca lo
+-- confirmamos); si no existe, cae de nuevo en Title, que es la más grande que sí sabemos
+-- que funciona en todo este proyecto. Solo se chequea que el campo exista (sin invocar
+-- push/popFont acá, que solo deberían usarse dentro de la función de dibujo).
+local biggestFont = ui.Font.Title
+local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
+if okBigFont and hugeFontExists then
+    biggestFont = ui.Font.Huge
+end
+
 local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
 end
@@ -481,19 +491,19 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        -- Las dos líneas usan la fuente más grande disponible (Title), para que se vea lo
-        -- más grande posible sin cambiar el tamaño del cartel.
-        ui.pushFont(ui.Font.Title)
+        -- Las dos líneas usan la fuente más grande disponible y ocupan todo el alto
+        -- posible del cartel, con el mínimo margen.
+        ui.pushFont(biggestFont)
         local label = "POSICIÓN " .. tostring(displayPuesto) .. "°"
         local labelSize = ui.measureText(label)
-        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 8))
+        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
         ui.popStyleColor()
 
         local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. "m"
         local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + 46))
+        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + panelHeight - valueSize.y - 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
