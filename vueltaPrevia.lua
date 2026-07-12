@@ -139,6 +139,12 @@ local ARRIVAL_DISTANCE = 2 -- metros: una vez que estás así de cerca (o menos)
 -- tiempo, pero el primer disparo sí exige esa dirección para evitar falsos positivos en
 -- otras partes del circuito que casualmente queden cerca de la grilla.
 local navActive = false
+-- Una vez que llegás (distancia <= ARRIVAL_DISTANCE), esto queda en true PARA SIEMPRE hasta
+-- que te alejás más de ARROW_ACTIVATION_DISTANCE de nuevo. Sin esto, apenas se apaga el
+-- cartel por haber llegado, la condición de activación (segus cerca y mirando adelante)
+-- se cumple de nuevo al instante, prendiéndolo y apagándolo en bucle cada cuadro -- el
+-- parpadeo rápido que se veía entre 1 y 0 metros.
+local hasArrived = false
 
 local state = {
     enabled = false,
@@ -461,18 +467,27 @@ function script.drawUI()
             arrow = arrows[sector + 1]
         end
 
-        if not navActive then
+        if hasArrived then
+            -- Ya llegaste antes: no se vuelve a mostrar nada hasta que te alejes en serio
+            -- (por ejemplo, la próxima vez que haya que volver a la grilla).
+            if dist > ARROW_ACTIVATION_DISTANCE then
+                hasArrived = false
+            end
+        elseif not navActive then
             -- Todavía no está activo: recién se prende si estás cerca Y la dirección da
             -- justo hacia adelante (evita falsos positivos en otras partes del circuito)
             if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "^" then
                 navActive = true
             end
         else
-            -- Ya está activo: se apaga si te alejaste de nuevo, O si ya llegaste (distancia
-            -- muy chica) -- no tiene sentido seguir mostrando el cartel una vez que estás
-            -- prácticamente en el lugar.
-            if dist > ARROW_ACTIVATION_DISTANCE or dist <= ARRIVAL_DISTANCE then
+            -- Ya está activo: se apaga si te alejaste de nuevo, o si ya llegaste (distancia
+            -- muy chica) -- en este último caso, además, queda bloqueado con hasArrived para
+            -- que no se pueda volver a prender solo mientras sigas ahí parado.
+            if dist > ARROW_ACTIVATION_DISTANCE then
                 navActive = false
+            elseif dist <= ARRIVAL_DISTANCE then
+                navActive = false
+                hasArrived = true
             end
         end
 
@@ -484,6 +499,7 @@ function script.drawUI()
         end
     else
         navActive = false -- se resetea si se apaga Vuelta Previa o no hay objetivo real
+        hasArrived = false
     end
 
     -- Diagnóstico throttled (una vez por segundo, para no inundar el log)
@@ -500,7 +516,7 @@ function script.drawUI()
 
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
-        local label = "POSICION N " .. tostring(displayPuesto)
+        local label = "TU LUGAR DE LARGADA EN N " .. tostring(displayPuesto)
         local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
 
         ui.pushFont(biggestFont)
