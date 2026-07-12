@@ -26,6 +26,14 @@ local PANEL_COUNT = 10
 local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
 
+-- Fuente más grande disponible (Huge si existe, si no Title) -- confirmado que funciona
+-- bien en el cartel de navegación de vueltaPrevia.lua, usándose ahora acá también.
+local biggestFont = ui.Font.Title
+local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
+if okBigFont and hugeFontExists then
+    biggestFont = ui.Font.Huge
+end
+
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
     selectedId = ac.StructItem.float()
@@ -639,11 +647,11 @@ function script.drawUI()
 
     if banner.alpha > 0 and not shouldHideForDrag("lastLap") then
         local a = banner.alpha
-        ui.pushFont(ui.Font.Title)
-        local text = "🏁  ÚLTIMA VUELTA"
+        ui.pushFont(biggestFont)
+        local text = "🏁 ÚLTIMA VUELTA"
         local textSize = ui.measureText(text)
-        local panelWidth = textSize.x + 80
-        local panelHeight = 60
+        local panelWidth = textSize.x + 30
+        local panelHeight = textSize.y + 14
 
         local mp = getMousePos()
         local mouseIsDown = isMouseButtonDown()
@@ -673,8 +681,20 @@ function script.drawUI()
         local label = editingPanelId == 2 and "GANADOR DE LA CARRERA" or podiumBanner.label
         local value = editingPanelId == 2 and "PILOTO DE EJEMPLO" or podiumBanner.value
         local icon = editingPanelId == 2 and "🏆" or podiumBanner.icon
-        local panelWidth = 620
-        local panelHeight = 96
+
+        local labelText = (icon ~= "" and (icon .. "  ") or "") .. string.upper(label)
+        ui.pushFont(ui.Font.Small)
+        local labelSize = ui.measureText(labelText)
+        ui.popFont()
+
+        local valueText = string.upper(value)
+        ui.pushFont(biggestFont)
+        local valueSize = ui.measureText(valueText)
+        ui.popFont()
+
+        -- Ancho/alto se ajustan al contenido más ancho de las dos líneas, con margen chico
+        local panelWidth = math.max(labelSize.x, valueSize.x) + 40
+        local panelHeight = labelSize.y + valueSize.y + 26
 
         local mp = getMousePos()
         local mouseIsDown = isMouseButtonDown()
@@ -684,18 +704,14 @@ function script.drawUI()
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
 
         ui.pushFont(ui.Font.Small)
-        local labelText = (icon ~= "" and (icon .. "  ") or "") .. string.upper(label)
-        local labelSize = ui.measureText(labelText)
-        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
+        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 10))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
         ui.text(labelText)
         ui.popStyleColor()
         ui.popFont()
 
-        ui.pushFont(ui.Font.Title)
-        local valueText = string.upper(value)
-        local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
+        ui.pushFont(biggestFont)
+        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + labelSize.y + 16))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
         ui.text(valueText)
         ui.popStyleColor()
