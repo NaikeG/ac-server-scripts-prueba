@@ -461,7 +461,7 @@ function script.drawUI()
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
         local panelWidth = 353
-        local panelHeight = 97
+        local panelHeight = 150
         local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
         local baseY = navPosCfg.posY * screen.h
 
