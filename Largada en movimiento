@@ -510,6 +510,15 @@ local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
 
 function script.drawUI()
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si el cartel dejó de ser visible a mitad
+    -- de camino. Sin esto, el candado compartido puede quedar trabado para siempre.
+    if dragging and not isMouseButtonDown() then
+        dragging = false
+        panelDragStateEvent5({ dragging = false, panelId = 0 })
+        ac.log("[LARGADA] Arrastre liberado por seguridad")
+    end
+
     if state.alpha <= 0 or shouldHideForDrag() then
         return
     end
