@@ -336,6 +336,7 @@ local dragging = false
 local dragOffsetX, dragOffsetY = 0, 0
 local blockWidth, blockHeight = 420, 226
 local navDiagTimer = 0
+local navSizeLogTimer = 0
 
 function script.drawUI()
     if state.alpha <= 0 or shouldHideForDrag(MY_PANEL_ID) then
@@ -455,8 +456,8 @@ function script.drawUI()
 
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
-        local panelWidth = 340
-        local panelHeight = 90
+        local panelWidth = 353
+        local panelHeight = 97
         local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
         local baseY = navPosCfg.posY * screen.h
 
@@ -489,20 +490,26 @@ function script.drawUI()
         -- Las dos líneas usan la fuente más grande disponible y ocupan todo el alto
         -- posible del cartel, con el mínimo margen.
         ui.pushFont(biggestFont)
-        local label = "POSICIÓN " .. tostring(displayPuesto)
+        local label = "POSICION N " .. tostring(displayPuesto)
         local labelSize = ui.measureText(label)
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
         ui.popStyleColor()
 
-        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. "m"
+        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
         local valueSize = ui.measureText(valueText)
         ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + panelHeight - valueSize.y - 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
         ui.popFont()
+
+        navSizeLogTimer = navSizeLogTimer + 1
+        if navSizeLogTimer == 30 then -- se loguea una sola vez, medio segundo después de aparecer
+            ac.log("[FORMATION] Tamaño real del texto: label alto=" .. tostring(labelSize.y) ..
+                "px (referencia: 21px), value alto=" .. tostring(valueSize.y) .. "px (referencia: 21px)")
+        end
         end) -- cierra el pcall del bloque completo
         if not okBlock then
             ac.log("[FORMATION] NAV BLOCK ERROR: " .. tostring(errBlock))
