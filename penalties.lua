@@ -473,10 +473,16 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.drawUI()
+    -- El mouse se lee UNA SOLA VEZ acá arriba y se reutiliza en toda la función -- llamarlo
+    -- de nuevo más abajo podía dar un resultado distinto en el mismo cuadro, provocando
+    -- arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
     -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
     -- está apretado, se libera YA, sin importar si el cartel dejó de ser visible a mitad
     -- de camino. Sin esto, el candado compartido puede quedar trabado para siempre.
-    if bannerDragging and not isMouseButtonDown() then
+    if bannerDragging and not mouseIsDown then
         bannerDragging = false
         panelDragStateEvent({ dragging = false, panelId = 0 })
         ac.log("[PENALTIES] Arrastre liberado por seguridad")
@@ -513,8 +519,6 @@ function script.drawUI()
         local baseX = bannerPosCfg.posX * screen.w
         local baseY = bannerPosCfg.posY * screen.h
 
-        local mp = getMousePos()
-        local mouseIsDown = isMouseButtonDown()
         if mp ~= nil then
             local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
             if not bannerDragging and mouseIsDown and overPanel then
