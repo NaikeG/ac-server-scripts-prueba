@@ -7,6 +7,13 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
+-- Fuente más grande disponible (Huge si existe, si no Title)
+local biggestFont = ui.Font.Title
+local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
+if okBigFont and hugeFontExists then
+    biggestFont = ui.Font.Huge
+end
+
 -- ===== Modo de edición: mismo evento que announcements.lua. Este cartel es el ID 5 -- solo
 -- se muestra con contenido de ejemplo cuando el menú de admin lo tiene seleccionado a él. =====
 local editingPanelId = 0
@@ -308,8 +315,6 @@ local function getMousePos()
     return nil
 end
 
-local BANNER_WIDTH = 620
-local BANNER_HEIGHT = 96
 local bannerPosCfg = ac.storage({
     posX = (screen.w - 620) * 0.5 / screen.w,
     posY = 200 / 1080
@@ -483,8 +488,21 @@ function script.drawUI()
         local c = editingPanelId == MY_PREVIEW_ID and rgbm(1.0, 0.65, 0.0, 1) or banner.color
         local labelToShow = editingPanelId == MY_PREVIEW_ID and "ADELANTAMIENTO BAJO SAFETY CAR" or banner.label
         local valueToShow = editingPanelId == MY_PREVIEW_ID and "DEVOLVER LA POSICIÓN (15s)" or banner.value
-        local panelWidth = BANNER_WIDTH
-        local panelHeight = BANNER_HEIGHT
+
+        local labelText = string.upper(labelToShow)
+        ui.pushFont(ui.Font.Small)
+        local labelSize = ui.measureText(labelText)
+        ui.popFont()
+
+        local valueText = string.upper(valueToShow)
+        ui.pushFont(biggestFont)
+        local valueSize = ui.measureText(valueText)
+        ui.popFont()
+
+        -- Ancho/alto dinámicos según el contenido, no un tamaño fijo -- los mensajes cortos
+        -- dan cajas chicas, los largos se siguen viendo completos sin cortarse.
+        local panelWidth = math.max(labelSize.x, valueSize.x) + 40
+        local panelHeight = labelSize.y + valueSize.y + 26
 
         local baseX = bannerPosCfg.posX * screen.w
         local baseY = bannerPosCfg.posY * screen.h
@@ -519,18 +537,14 @@ function script.drawUI()
         ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), rgbm(c.r, c.g, c.b, a), 10, 0, 3)
 
         ui.pushFont(ui.Font.Small)
-        local labelText = string.upper(labelToShow)
-        local labelSize = ui.measureText(labelText)
-        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 16))
+        ui.setCursor(vec2(x + (panelWidth - labelSize.x) * 0.5, y + 10))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(c.r, c.g, c.b, a))
         ui.text(labelText)
         ui.popStyleColor()
         ui.popFont()
 
-        ui.pushFont(ui.Font.Title)
-        local valueText = string.upper(valueToShow)
-        local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + 46))
+        ui.pushFont(biggestFont)
+        ui.setCursor(vec2(x + (panelWidth - valueSize.x) * 0.5, y + labelSize.y + 16))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, a))
         ui.text(valueText)
         ui.popStyleColor()
