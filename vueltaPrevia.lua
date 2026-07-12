@@ -97,7 +97,17 @@ local function captureGridMap()
                 local okSpline, splinePos = pcall(function() return otherCar.splinePosition end)
                 local okName, name = pcall(function() return otherCar:driverName() end)
                 if okPos and okSpline then
-                    table.insert(entries, { index = i, name = okName and name or "?", pos = pos, spline = splinePos })
+                    -- OJO: se copian los valores numéricos (x,y,z) a una tabla nueva, en vez
+                    -- de guardar el objeto "pos" tal cual -- si CSP lo devuelve como una
+                    -- referencia viva a la posición actual del auto (no una foto congelada),
+                    -- guardarlo sin copiar haría que el "objetivo" te siga a vos mismo, dando
+                    -- siempre distancia 0.
+                    table.insert(entries, {
+                        index = i,
+                        name = okName and name or "?",
+                        pos = { x = pos.x, y = pos.y, z = pos.z },
+                        spline = splinePos
+                    })
                 end
             end
         end
@@ -120,6 +130,7 @@ local function captureGridMap()
 end
 
 local wasRaceSession = false
+local ARROW_ACTIVATION_DISTANCE = 100 -- metros: el cartel entero recién aparece a esta distancia o menos
 
 local state = {
     enabled = false,
@@ -158,6 +169,7 @@ end)
 ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findLookField()
+    ARROW_ACTIVATION_DISTANCE = config:get("FORMATION", "ARROW_ACTIVATION_DISTANCE_METERS", 100)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -362,46 +374,33 @@ function script.drawUI()
     drawGantry(centerX, gantryY)
 
     ------------------------------------------------
-    -- Cartel de navegación: "TE CORRESPONDE EL PUESTO N" + flecha + distancia
+    -- Cartel de navegación: aparece recién a los 100m (configurable) de tu casillero, con
+    -- "POSICIÓN N°" + flecha + distancia -- todo el cartel queda oculto hasta ese momento.
     ------------------------------------------------
     local NAV_PANEL_ID = 10
-    local ARROW_ACTIVATION_DISTANCE = 100 -- metros: la flecha recién se activa a esta distancia o menos
     local hasRealTarget = (myGridPosition ~= nil and gridSlotWorldPos[myGridPosition] ~= nil)
-    local showNav = (state.enabled and hasRealTarget) or editingPanelId == NAV_PANEL_ID
 
-    -- Diagnóstico throttled (una vez por segundo, para no inundar el log)
-    navDiagTimer = navDiagTimer + 1
-    if navDiagTimer % 60 == 0 then
-        local okT, errT = pcall(function()
-            ac.log("[FORMATION] NAV DIAG: state.enabled=" .. tostring(state.enabled) ..
-                " hasRealTarget=" .. tostring(hasRealTarget) ..
-                " myGridPosition=" .. tostring(myGridPosition) ..
-                " showNav=" .. tostring(showNav) ..
-                " hideForDrag=" .. tostring(shouldHideForDrag(NAV_PANEL_ID)))
-        end)
-        if not okT then
-            ac.log("[FORMATION] NAV DIAG ERROR: " .. tostring(errT))
-        end
-    end
+    local displayPuesto, displayDistance, displayArrow
+    local shouldRenderPanel = false
 
-    if showNav and not shouldHideForDrag(NAV_PANEL_ID) then
-        local okBlock, errBlock = pcall(function()
-        local displayPuesto = editingPanelId == NAV_PANEL_ID and 5 or myGridPosition
-        local displayDistance = 0
-        local displayArrow = "↑"
-        local arrowActive = false
+    if editingPanelId == NAV_PANEL_ID then
+        -- Modo de edición: siempre visible con datos de ejemplo, para poder acomodarlo
+        shouldRenderPanel = true
+        displayPuesto = hasRealTarget and myGridPosition or 5
+        displayDistance = 42
+        displayArrow = "↗"
+    elseif state.enabled and hasRealTarget then
+        local target = gridSlotWorldPos[myGridPosition]
+        local okLook, look = pcall(function() return car.look end)
+        local dx = target.x - car.position.x
+        local dz = target.z - car.position.z
+        local dist = math.sqrt(dx * dx + dz * dz)
 
-        if editingPanelId == NAV_PANEL_ID and not hasRealTarget then
-            displayDistance = 42 -- valor de ejemplo
-            displayArrow = "↗"
-            arrowActive = true
-        else
-            local target = gridSlotWorldPos[myGridPosition]
-            local okLook, look = pcall(function() return car.look end)
-            local dx = target.x - car.position.x
-            local dz = target.z - car.position.z
-            displayDistance = math.sqrt(dx * dx + dz * dz)
-            arrowActive = displayDistance <= ARROW_ACTIVATION_DISTANCE
+        if dist <= ARROW_ACTIVATION_DISTANCE then
+            shouldRenderPanel = true
+            displayPuesto = myGridPosition
+            displayDistance = dist
+            displayArrow = "↑"
             if okLook and look ~= nil then
                 local dot = look.x * dx + look.z * dz
                 local cross = look.x * dz - look.z * dx
@@ -412,7 +411,22 @@ function script.drawUI()
                 displayArrow = arrows[sector + 1]
             end
         end
+    end
 
+    -- Diagnóstico throttled (una vez por segundo, para no inundar el log)
+    navDiagTimer = navDiagTimer + 1
+    if navDiagTimer % 60 == 0 then
+        pcall(function()
+            ac.log("[FORMATION] NAV DIAG: state.enabled=" .. tostring(state.enabled) ..
+                " hasRealTarget=" .. tostring(hasRealTarget) ..
+                " myGridPosition=" .. tostring(myGridPosition) ..
+                " shouldRenderPanel=" .. tostring(shouldRenderPanel) ..
+                " distance=" .. tostring(displayDistance))
+        end)
+    end
+
+    if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
+        local okBlock, errBlock = pcall(function()
         local panelWidth = 340
         local panelHeight = 90
         local baseX = navPosCfg.posX * screen.w - panelWidth * 0.5
@@ -444,24 +458,19 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        ui.pushFont(ui.Font.Small)
-        local label = "TE CORRESPONDE EL PUESTO " .. tostring(displayPuesto)
+        -- Las dos líneas usan la fuente más grande disponible (Title), para que se vea lo
+        -- más grande posible sin cambiar el tamaño del cartel.
+        ui.pushFont(ui.Font.Title)
+        local label = "POSICIÓN " .. tostring(displayPuesto) .. "°"
         local labelSize = ui.measureText(label)
-        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 12))
+        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 8))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
         ui.popStyleColor()
-        ui.popFont()
 
-        ui.pushFont(ui.Font.Title)
-        local valueText
-        if arrowActive then
-            valueText = displayArrow .. "  " .. math.floor(displayDistance) .. "m"
-        else
-            valueText = "ACERCÁNDOSE..."
-        end
+        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. "m"
         local valueSize = ui.measureText(valueText)
-        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + 42))
+        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + 46))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
