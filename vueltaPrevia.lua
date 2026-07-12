@@ -237,15 +237,10 @@ local function safeAtan2(y, x)
     return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
--- Intenta usar una fuente más grande que Title si existe en esta versión de CSP (nunca lo
--- confirmamos); si no existe, cae de nuevo en Title, que es la más grande que sí sabemos
--- que funciona en todo este proyecto. Solo se chequea que el campo exista (sin invocar
--- push/popFont acá, que solo deberían usarse dentro de la función de dibujo).
+-- OJO: se probó una fuente "Huge" más grande, pero no soporta tildes/símbolos especiales
+-- (mostraba "?" en vez de Ó, °, y la flecha) -- se usa Title, que sí los soporta bien en
+-- el resto del proyecto.
 local biggestFont = ui.Font.Title
-local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
-if okBigFont and hugeFontExists then
-    biggestFont = ui.Font.Huge
-end
 
 local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
@@ -494,7 +489,7 @@ function script.drawUI()
         -- Las dos líneas usan la fuente más grande disponible y ocupan todo el alto
         -- posible del cartel, con el mínimo margen.
         ui.pushFont(biggestFont)
-        local label = "POSICIÓN " .. tostring(displayPuesto) .. "°"
+        local label = "POSICIÓN " .. tostring(displayPuesto)
         local labelSize = ui.measureText(label)
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
