@@ -139,6 +139,10 @@ local ARRIVAL_DISTANCE = 2 -- metros: una vez que estás así de cerca (o menos)
 -- tiempo, pero el primer disparo sí exige esa dirección para evitar falsos positivos en
 -- otras partes del circuito que casualmente queden cerca de la grilla.
 local navActive = false
+local navActivationTimer = 0
+local NAV_ACTIVATION_SUSTAIN_SECONDS = 0.3 -- la condición de activación tiene que sostenerse este ratito antes de prender de verdad, para filtrar algún cuadro suelto raro
+local navLastFrameTime = nil
+local navFrameDt = 0
 -- Una vez que llegás (distancia <= ARRIVAL_DISTANCE), esto queda en true PARA SIEMPRE hasta
 -- que te alejás más de ARROW_ACTIVATION_DISTANCE de nuevo. Sin esto, apenas se apaga el
 -- cartel por haber llegado, la condición de activación (segus cerca y mirando adelante)
@@ -353,6 +357,28 @@ local blockWidth, blockHeight = 460, 266 -- área de arrastre; se ajustó al cre
 local navDiagTimer = 0
 local navSizeLogTimer = 0
 
+-- Dibuja una flecha como gráfico (no como texto), rotada al ángulo exacto -- así no depende
+-- de ningún glifo de fuente (podía fallar con caracteres especiales en fuentes grandes) y
+-- puede apuntar a cualquier ángulo real, no solo a 8 direcciones fijas.
+-- angleRad: 0 = derecho para arriba/adelante, positivo = hacia la derecha (sentido horario)
+local function drawArrow(cx, cy, angleRad, length, color, thickness)
+    local dx = math.sin(angleRad)
+    local dy = -math.cos(angleRad)
+    local tipX, tipY = cx + dx * length * 0.5, cy + dy * length * 0.5
+    local tailX, tailY = cx - dx * length * 0.5, cy - dy * length * 0.5
+
+    ui.drawLine(vec2(tailX, tailY), vec2(tipX, tipY), color, thickness)
+
+    local headLen = length * 0.4
+    local headAngle = math.rad(28)
+    local a1 = angleRad + math.pi - headAngle
+    local a2 = angleRad + math.pi + headAngle
+    local h1x, h1y = tipX + math.sin(a1) * headLen, tipY - math.cos(a1) * headLen
+    local h2x, h2y = tipX + math.sin(a2) * headLen, tipY - math.cos(a2) * headLen
+    ui.drawLine(vec2(tipX, tipY), vec2(h1x, h1y), color, thickness)
+    ui.drawLine(vec2(tipX, tipY), vec2(h2x, h2y), color, thickness)
+end
+
 function script.drawUI()
     -- Chequeo de seguridad INCONDICIONAL, antes que cualquier "return" por visibilidad: si
     -- yo tenía un cartel en arrastre y el mouse ya no está apretado, lo libero y aviso YA,
@@ -448,19 +474,24 @@ function script.drawUI()
         shouldRenderPanel = true
         displayPuesto = hasRealTarget and myGridPosition or 5
         displayDistance = 42
-        displayArrow = "^>"
+        displayArrow = math.rad(45) -- ejemplo: diagonal, para mostrar en modo edición
     elseif state.enabled and hasRealTarget then
+        navFrameDt = navLastFrameTime and math.max((sim.currentSessionTime - navLastFrameTime) / 1000, 0) or 0
+        navLastFrameTime = sim.currentSessionTime
+
         local target = gridSlotWorldPos[myGridPosition]
         local okLook, look = pcall(function() return car.look end)
         local dx = target.x - car.position.x
         local dz = target.z - car.position.z
         local dist = math.sqrt(dx * dx + dz * dz)
 
-        local arrow = "^"
+        local arrow = "^" -- se sigue usando para decidir si "mira justo para adelante" (activación)
+        local angleRad = 0 -- ángulo continuo real, para dibujar la flecha (0 = derecho para adelante)
         if okLook and look ~= nil then
             local dot = look.x * dx + look.z * dz
             local cross = look.x * dz - look.z * dx
-            local angleDeg = math.deg(safeAtan2(cross, dot))
+            angleRad = safeAtan2(cross, dot)
+            local angleDeg = math.deg(angleRad)
             if angleDeg < 0 then angleDeg = angleDeg + 360 end
             local sector = math.floor((angleDeg + 22.5) / 45) % 8
             local arrows = { "^", "^>", ">", "v>", "v", "<v", "<", "<^" }
@@ -474,10 +505,16 @@ function script.drawUI()
                 hasArrived = false
             end
         elseif not navActive then
-            -- Todavía no está activo: recién se prende si estás cerca Y la dirección da
-            -- justo hacia adelante (evita falsos positivos en otras partes del circuito)
+            -- Todavía no está activo: la condición (cerca y mirando adelante) tiene que
+            -- sostenerse un ratito antes de prender de verdad -- así un cuadro suelto raro
+            -- (por ejemplo justo al cambiar de sesión) no dispara el cartel de la nada.
             if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "^" then
-                navActive = true
+                navActivationTimer = navActivationTimer + navFrameDt
+                if navActivationTimer >= NAV_ACTIVATION_SUSTAIN_SECONDS then
+                    navActive = true
+                end
+            else
+                navActivationTimer = 0
             end
         else
             -- Ya está activo: se apaga si te alejaste de nuevo, o si ya llegaste (distancia
@@ -485,8 +522,10 @@ function script.drawUI()
             -- que no se pueda volver a prender solo mientras sigas ahí parado.
             if dist > ARROW_ACTIVATION_DISTANCE then
                 navActive = false
+                navActivationTimer = 0
             elseif dist <= ARRIVAL_DISTANCE then
                 navActive = false
+                navActivationTimer = 0
                 hasArrived = true
             end
         end
@@ -495,10 +534,11 @@ function script.drawUI()
             shouldRenderPanel = true
             displayPuesto = myGridPosition
             displayDistance = dist
-            displayArrow = arrow
+            displayArrow = angleRad
         end
     else
         navActive = false -- se resetea si se apaga Vuelta Previa o no hay objetivo real
+        navActivationTimer = 0
         hasArrived = false
     end
 
@@ -516,16 +556,19 @@ function script.drawUI()
 
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
-        local label = "TU LUGAR DE LARGADA EN N " .. tostring(displayPuesto)
-        local valueText = displayArrow .. "  " .. math.floor(displayDistance) .. " m"
+        local label = "TU LUGAR DE LARGADA EN GRILLA N " .. tostring(displayPuesto)
+        local valueText = math.floor(displayDistance) .. " m"
+        local ARROW_SIZE = 44 -- un poco más grande que antes, y ya no depende de ningún glifo de fuente
+        local ARROW_GAP = 14
 
         ui.pushFont(biggestFont)
         local labelSize = ui.measureText(label)
         local valueSize = ui.measureText(valueText)
         ui.popFont()
 
-        local panelWidth = math.max(labelSize.x, valueSize.x) + 30
-        local panelHeight = labelSize.y + valueSize.y + 22
+        local valueRowWidth = ARROW_SIZE + ARROW_GAP + valueSize.x
+        local panelWidth = math.max(labelSize.x, valueRowWidth) + 30
+        local panelHeight = labelSize.y + math.max(valueSize.y, ARROW_SIZE) + 22
         local baseX = panelPositions.navPosX * screen.w - panelWidth * 0.5
         local baseY = panelPositions.navPosY * screen.h
 
@@ -555,14 +598,24 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        -- Las dos líneas usan la fuente más grande disponible (Huge si existe, si no Title)
         ui.pushFont(biggestFont)
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
         ui.popStyleColor()
+        ui.popFont()
 
-        ui.setCursor(vec2(baseX + (panelWidth - valueSize.x) * 0.5, baseY + labelSize.y + 8))
+        -- Segunda fila: flecha (gráfico, no texto) + distancia, centradas juntas como grupo
+        local rowY = baseY + labelSize.y + 8
+        local rowHeight = math.max(valueSize.y, ARROW_SIZE)
+        local groupX = baseX + (panelWidth - valueRowWidth) * 0.5
+
+        local arrowCenterX = groupX + ARROW_SIZE * 0.5
+        local arrowCenterY = rowY + rowHeight * 0.5
+        drawArrow(arrowCenterX, arrowCenterY, displayArrow, ARROW_SIZE, rgbm(1, 1, 1, 1), 5)
+
+        ui.pushFont(biggestFont)
+        ui.setCursor(vec2(groupX + ARROW_SIZE + ARROW_GAP, rowY + (rowHeight - valueSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
