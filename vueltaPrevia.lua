@@ -131,6 +131,12 @@ end
 
 local wasRaceSession = false
 local ARROW_ACTIVATION_DISTANCE = 100 -- metros: el cartel entero recién aparece a esta distancia o menos
+-- Una vez que se activa (con la dirección justo hacia adelante), se queda "prendido" y la
+-- flecha puede ir cambiando libremente para guiar ajustes de izquierda/derecha, hasta que
+-- te alejes de nuevo -- así no hace falta seguir mirando exactamente para adelante todo el
+-- tiempo, pero el primer disparo sí exige esa dirección para evitar falsos positivos en
+-- otras partes del circuito que casualmente queden cerca de la grilla.
+local navActive = false
 
 local state = {
     enabled = false,
@@ -396,21 +402,38 @@ function script.drawUI()
         local dz = target.z - car.position.z
         local dist = math.sqrt(dx * dx + dz * dz)
 
-        if dist <= ARROW_ACTIVATION_DISTANCE then
+        local arrow = "↑"
+        if okLook and look ~= nil then
+            local dot = look.x * dx + look.z * dz
+            local cross = look.x * dz - look.z * dx
+            local angleDeg = math.deg(safeAtan2(cross, dot))
+            if angleDeg < 0 then angleDeg = angleDeg + 360 end
+            local sector = math.floor((angleDeg + 22.5) / 45) % 8
+            local arrows = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" }
+            arrow = arrows[sector + 1]
+        end
+
+        if not navActive then
+            -- Todavía no está activo: recién se prende si estás cerca Y la dirección da
+            -- justo hacia adelante (evita falsos positivos en otras partes del circuito)
+            if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "↑" then
+                navActive = true
+            end
+        else
+            -- Ya está activo: se apaga solo si te alejaste de nuevo
+            if dist > ARROW_ACTIVATION_DISTANCE then
+                navActive = false
+            end
+        end
+
+        if navActive then
             shouldRenderPanel = true
             displayPuesto = myGridPosition
             displayDistance = dist
-            displayArrow = "↑"
-            if okLook and look ~= nil then
-                local dot = look.x * dx + look.z * dz
-                local cross = look.x * dz - look.z * dx
-                local angleDeg = math.deg(safeAtan2(cross, dot))
-                if angleDeg < 0 then angleDeg = angleDeg + 360 end
-                local sector = math.floor((angleDeg + 22.5) / 45) % 8
-                local arrows = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" }
-                displayArrow = arrows[sector + 1]
-            end
+            displayArrow = arrow
         end
+    else
+        navActive = false -- se resetea si se apaga Vuelta Previa o no hay objetivo real
     end
 
     -- Diagnóstico throttled (una vez por segundo, para no inundar el log)
