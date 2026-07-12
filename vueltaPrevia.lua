@@ -237,10 +237,14 @@ local function safeAtan2(y, x)
     return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
--- OJO: se probó una fuente "Huge" más grande, pero no soporta tildes/símbolos especiales
--- (mostraba "?" en vez de Ó, °, y la flecha) -- se usa Title, que sí los soporta bien en
--- el resto del proyecto.
+-- Se prueba "Huge" (más grande que Title) -- la vez anterior falló porque le faltaban los
+-- glifos de tildes y de las flechas unicode, así que ahora el texto usa solo caracteres
+-- ASCII simples (sin tildes, flechas tipo ^ > v <) para evitar ese problema.
 local biggestFont = ui.Font.Title
+local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
+if okBigFont and hugeFontExists then
+    biggestFont = ui.Font.Huge
+end
 
 local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
@@ -400,7 +404,7 @@ function script.drawUI()
         shouldRenderPanel = true
         displayPuesto = hasRealTarget and myGridPosition or 5
         displayDistance = 42
-        displayArrow = "↗"
+        displayArrow = "^>"
     elseif state.enabled and hasRealTarget then
         local target = gridSlotWorldPos[myGridPosition]
         local okLook, look = pcall(function() return car.look end)
@@ -408,21 +412,21 @@ function script.drawUI()
         local dz = target.z - car.position.z
         local dist = math.sqrt(dx * dx + dz * dz)
 
-        local arrow = "↑"
+        local arrow = "^"
         if okLook and look ~= nil then
             local dot = look.x * dx + look.z * dz
             local cross = look.x * dz - look.z * dx
             local angleDeg = math.deg(safeAtan2(cross, dot))
             if angleDeg < 0 then angleDeg = angleDeg + 360 end
             local sector = math.floor((angleDeg + 22.5) / 45) % 8
-            local arrows = { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" }
+            local arrows = { "^", "^>", ">", "v>", "v", "<v", "<", "<^" }
             arrow = arrows[sector + 1]
         end
 
         if not navActive then
             -- Todavía no está activo: recién se prende si estás cerca Y la dirección da
             -- justo hacia adelante (evita falsos positivos en otras partes del circuito)
-            if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "↑" then
+            if dist <= ARROW_ACTIVATION_DISTANCE and arrow == "^" then
                 navActive = true
             end
         else
@@ -487,16 +491,10 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        -- Las dos líneas usan la fuente más grande disponible. Se intenta además escalarlas
-        -- más grandes con setWindowFontScale (función estándar de Dear ImGui, la librería
-        -- que usa CSP por debajo) -- no está confirmado que funcione en este contexto, así
-        -- que va protegido: si falla o no existe, se seguye viendo con el tamaño normal.
-        local TEXT_SCALE = 1.6
-        local scaleOk = pcall(function() ui.setWindowFontScale(TEXT_SCALE) end)
-
+        -- Las dos líneas usan la fuente más grande disponible (Huge si existe, si no Title)
         ui.pushFont(biggestFont)
         local label = "POSICION N " .. tostring(displayPuesto)
-        local labelSize = ui.measureText(label) -- si scaleOk, esto YA viene escalado, no hay que multiplicar de nuevo
+        local labelSize = ui.measureText(label)
         ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
         ui.text(label)
@@ -510,12 +508,10 @@ function script.drawUI()
         ui.popStyleColor()
         ui.popFont()
 
-        if scaleOk then pcall(function() ui.setWindowFontScale(1.0) end) end
-
         navSizeLogTimer = navSizeLogTimer + 1
         if navSizeLogTimer == 30 then -- se loguea una sola vez, medio segundo después de aparecer
-            ac.log("[FORMATION] scaleOk=" .. tostring(scaleOk) .. " | Tamaño real: label alto=" ..
-                tostring(labelSize.y) .. "px, value alto=" .. tostring(valueSize.y) .. "px (sin escalar daba 24px)")
+            ac.log("[FORMATION] usandoHuge=" .. tostring(biggestFont == ui.Font.Huge) .. " | Tamaño real: label alto=" ..
+                tostring(labelSize.y) .. "px, value alto=" .. tostring(valueSize.y) .. "px (con Title daba 24px)")
         end
         end) -- cierra el pcall del bloque completo
         if not okBlock then
