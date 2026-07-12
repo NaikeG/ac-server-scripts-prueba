@@ -119,12 +119,7 @@ local function captureGridMap()
     ac.log("[FORMATION] Mi puesto de grilla: " .. tostring(myGridPosition))
 end
 
-ac.onSessionStart(function()
-    if sim.raceSessionType == ac.SessionType.Race then
-        gridCaptured = false
-        gridCaptureTimer = GRID_CAPTURE_DELAY_SECONDS
-    end
-end)
+local wasRaceSession = false
 
 local state = {
     enabled = false,
@@ -187,6 +182,17 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.update(dt)
+    -- Vigila la transición a sesión de Carrera en TODOS los frames (no en un solo evento
+    -- puntual), porque sim.raceSessionType puede leerse con un valor viejo justo en el
+    -- instante exacto de la transición -- de esta forma se autocorrige apenas se actualiza.
+    local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
+    if isRaceSession and not wasRaceSession then
+        gridCaptured = false
+        gridCaptureTimer = GRID_CAPTURE_DELAY_SECONDS
+        ac.log("[FORMATION] Transición a sesión de Carrera detectada, arranca el timer de captura de grilla")
+    end
+    wasRaceSession = isRaceSession
+
     if not gridCaptured and gridCaptureTimer > 0 then
         gridCaptureTimer = gridCaptureTimer - dt
         if gridCaptureTimer <= 0 then
