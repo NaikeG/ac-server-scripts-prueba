@@ -359,11 +359,17 @@ function script.drawUI() -- Panel tipo gantry F1
     --ac.debug("a", sim.currentSessionTime)
     --ac.debug("b", startTime-delayTime-seqStartTime)
 
+    -- El mouse se lee UNA SOLA VEZ acá arriba y se reutiliza en toda la función -- llamarlo
+    -- de nuevo más abajo podía dar un resultado distinto en el mismo cuadro, provocando
+    -- arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
     -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
     -- está apretado, se libera YA, sin importar si el semáforo dejó de ser visible a mitad
     -- de camino (por ejemplo si terminó la secuencia mientras se estaba moviendo el
     -- cartel). Sin esto, el candado compartido puede quedar trabado para siempre.
-    if dragging and not isMouseButtonDown() then
+    if dragging and not mouseIsDown then
         dragging = false
         panelDragStateEvent4({ dragging = false, panelId = 0 })
         ac.log("[STARTLIGHTS] Arrastre liberado por seguridad")
@@ -437,8 +443,6 @@ function script.drawUI() -- Panel tipo gantry F1
 
     -- Detección de arrastre sobre la carcasa
     do
-        local mp = getMousePos()
-        local mouseIsDown = isMouseButtonDown()
         if mp ~= nil then
             local overPanel = mp.x >= panelX1 and mp.x <= panelX2 and mp.y >= panelY1 and mp.y <= panelY2
             if not dragging and mouseIsDown and overPanel then
