@@ -26,13 +26,9 @@ local PANEL_COUNT = 10
 local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
 
--- Fuente más grande disponible (Huge si existe, si no Title) -- confirmado que funciona
--- bien en el cartel de navegación de vueltaPrevia.lua, usándose ahora acá también.
+-- Fuente usada para el contenido principal de los carteles (se probó Huge, pero resultó
+-- demasiado grande -- Title da un buen equilibrio entre legible y compacto)
 local biggestFont = ui.Font.Title
-local okBigFont, hugeFontExists = pcall(function() return ui.Font.Huge ~= nil end)
-if okBigFont and hugeFontExists then
-    biggestFont = ui.Font.Huge
-end
 
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
@@ -608,6 +604,16 @@ local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp
 end
 
 function script.drawUI()
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si ese cartel dejó de ser visible a mitad
+    -- de camino. Sin esto, el candado compartido puede quedar trabado para siempre,
+    -- ocultando todos los carteles de todos los scripts hasta reiniciar.
+    if activeDragTarget ~= nil and not isMouseButtonDown() then
+        activeDragTarget = nil
+        panelDragStateEvent({ dragging = false, panelId = 0 })
+        ac.log("[ANNOUNCE] Arrastre liberado por seguridad (cartel se había ocultado a mitad de camino)")
+    end
+
     -- Los mensajes de chat se disparan acá y no en script.update, porque drawUI solo se
     -- ejecuta donde hay pantalla (el cliente), nunca en la copia headless que corre en el
     -- servidor. Así se evita que el mismo aviso se mande dos veces.
