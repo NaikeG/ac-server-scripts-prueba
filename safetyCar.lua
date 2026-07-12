@@ -211,7 +211,7 @@ local function drawSidePanel(x, y, height)
     local title = "SAFETY CAR"
     local subtitle = "MANTENER POSICIONES"
 
-    ui.pushFont(ui.Font.Huge)
+    ui.pushFont(ui.Font.Title)
     local titleSize = ui.measureText(title)
     local subSize = ui.measureText(subtitle)
     ui.popFont()
@@ -221,7 +221,7 @@ local function drawSidePanel(x, y, height)
     ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(0.03, 0.03, 0.03, 0.92), 10)
     ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(1.0, 0.82, 0.0, 1), 10, 0, 3)
 
-    ui.pushFont(ui.Font.Huge)
+    ui.pushFont(ui.Font.Title)
     ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + (height * 0.5) - titleSize.y - 2))
     ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
     ui.text(title)
@@ -282,6 +282,16 @@ local dragOffsetX, dragOffsetY = 0, 0
 local boxW, boxH = 150, 150
 
 function script.drawUI()
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si el cartel dejó de ser visible a mitad
+    -- de camino (por ejemplo si se apaga el Safety Car mientras se estaba moviendo el
+    -- cartel). Sin esto, el candado compartido puede quedar trabado para siempre.
+    if dragging and not isMouseButtonDown() then
+        dragging = false
+        panelDragStateEvent2({ dragging = false, panelId = 0 })
+        ac.log("[SAFETYCAR] Arrastre liberado por seguridad")
+    end
+
     if state.alpha <= 0 or shouldHideForDrag() then
         return
     end
