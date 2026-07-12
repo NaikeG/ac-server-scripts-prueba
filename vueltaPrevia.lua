@@ -6,6 +6,7 @@ local adminFlag = ui.OnlineExtraFlags.Admin
 -- el ID 7 -- solo se muestra cuando el menú lo tiene seleccionado. =====
 local editingPanelId = 0
 local MY_PREVIEW_ID = 7
+local NAV_PANEL_ID = 10 -- el cartel de navegación vive en este mismo script, pero es un ID de edición aparte
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
     selectedId = ac.StructItem.float()
@@ -326,7 +327,7 @@ local cfg = ac.storage({
 })
 
 -- Posición del cartel de navegación al puesto de grilla (independiente del combo de arriba)
-local navPosCfg = ac.storage({ posX = 0.5, posY = 340 / 1080 })
+local navPosCfg = ac.storage({ posX = 0.5, posY = 550 / 1080 }) -- más abajo, lejos del combo de arriba
 local navDragging = false
 local navDragOffsetX, navDragOffsetY = 0, 0
 
@@ -364,7 +365,16 @@ function script.drawUI()
         ac.log("[FORMATION] Arrastre liberado por seguridad (cartel se había ocultado a mitad de camino)")
     end
 
-    if state.alpha <= 0 or shouldHideForDrag(MY_PANEL_ID) then
+    -- El "state.alpha <= 0" solo debería cortar el combo de Vuelta Previa -- pero el cartel
+    -- de navegación (más abajo en esta misma función) también necesita poder mostrarse en
+    -- modo edición (editingPanelId == NAV_PANEL_ID) aunque Vuelta Previa no esté activada.
+    --
+    -- Y el chequeo de "algo se está arrastrando" tiene que tolerar CUALQUIERA de los dos
+    -- IDs de este script (7 o 10) -- antes solo toleraba el 7, así que arrastrar
+    -- específicamente el cartel de navegación (ID 10) hacía que toda la función se cortara
+    -- y desapareciera todo de golpe, justo a mitad del arrastre.
+    if (state.alpha <= 0 and editingPanelId ~= NAV_PANEL_ID) or
+        (shouldHideForDrag(MY_PANEL_ID) and shouldHideForDrag(NAV_PANEL_ID)) then
         return
     end
 
@@ -416,7 +426,6 @@ function script.drawUI()
     -- Cartel de navegación: aparece recién a los 100m (configurable) de tu casillero, con
     -- "POSICIÓN N°" + flecha + distancia -- todo el cartel queda oculto hasta ese momento.
     ------------------------------------------------
-    local NAV_PANEL_ID = 10
     local hasRealTarget = (myGridPosition ~= nil and gridSlotWorldPos[myGridPosition] ~= nil)
 
     local displayPuesto, displayDistance, displayArrow
