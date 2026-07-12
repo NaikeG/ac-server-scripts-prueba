@@ -132,6 +132,7 @@ end
 
 local wasRaceSession = false
 local ARROW_ACTIVATION_DISTANCE = 100 -- metros: el cartel entero recién aparece a esta distancia o menos
+local ARRIVAL_DISTANCE = 2 -- metros: una vez que estás así de cerca (o menos), se apaga el cartel, ya llegaste
 -- Una vez que se activa (con la dirección justo hacia adelante), se queda "prendido" y la
 -- flecha puede ir cambiando libremente para guiar ajustes de izquierda/derecha, hasta que
 -- te alejes de nuevo -- así no hace falta seguir mirando exactamente para adelante todo el
@@ -177,6 +178,7 @@ ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findLookField()
     ARROW_ACTIVATION_DISTANCE = config:get("FORMATION", "ARROW_ACTIVATION_DISTANCE_METERS", 100)
+    ARRIVAL_DISTANCE = config:get("FORMATION", "ARRIVAL_DISTANCE_METERS", 2)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -466,8 +468,10 @@ function script.drawUI()
                 navActive = true
             end
         else
-            -- Ya está activo: se apaga solo si te alejaste de nuevo
-            if dist > ARROW_ACTIVATION_DISTANCE then
+            -- Ya está activo: se apaga si te alejaste de nuevo, O si ya llegaste (distancia
+            -- muy chica) -- no tiene sentido seguir mostrando el cartel una vez que estás
+            -- prácticamente en el lugar.
+            if dist > ARROW_ACTIVATION_DISTANCE or dist <= ARRIVAL_DISTANCE then
                 navActive = false
             end
         end
