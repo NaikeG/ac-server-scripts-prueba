@@ -2,6 +2,38 @@ local sim = ac.getSim()
 local car = ac.getCar(0)
 local adminFlag = ui.OnlineExtraFlags.Admin
 
+-- ===== DIAGNÓSTICO: marcador 3D en el piso (nunca usamos script.draw3D ni el namespace
+-- "render" en todo este proyecto). Se prueban varias funciones candidatas UNA sola vez, al
+-- conectarse, para ver cuáles existen -- no dibuja nada todavía, solo loguea.
+local draw3DTested = false
+local function testDraw3DFunctions()
+    if draw3DTested then return end
+    draw3DTested = true
+
+    ac.log("[FORMATION] --- Probando funciones de render 3D candidatas ---")
+    local okRender, renderExists = pcall(function() return render ~= nil end)
+    ac.log("[FORMATION] namespace 'render' existe = " .. tostring(okRender and renderExists))
+
+    local candidates = {
+        "debugText", "debugSphere", "debugQuad", "debugLine", "debugCross",
+        "debugPoint", "debugArrow", "debugCircle", "debugBox"
+    }
+    if okRender and renderExists then
+        for _, name in ipairs(candidates) do
+            local ok, val = pcall(function() return render[name] end)
+            ac.log("[FORMATION] render." .. name .. " = " .. tostring(ok and val or "no existe"))
+        end
+    end
+
+    -- También probamos si ac.* tiene algo directo para esto, y si world-to-screen existe
+    local okW2S, w2sVal = pcall(function() return ac.worldToScreen end)
+    ac.log("[FORMATION] ac.worldToScreen = " .. tostring(okW2S and w2sVal or "no existe"))
+end
+
+function script.draw3D()
+    testDraw3DFunctions()
+end
+
 -- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
 -- el ID 7 -- solo se muestra cuando el menú lo tiene seleccionado. =====
 local editingPanelId = 0
