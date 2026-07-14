@@ -2,38 +2,6 @@ local sim = ac.getSim()
 local car = ac.getCar(0)
 local adminFlag = ui.OnlineExtraFlags.Admin
 
--- ===== DIAGNÓSTICO: marcador 3D en el piso (nunca usamos script.draw3D ni el namespace
--- "render" en todo este proyecto). Se prueban varias funciones candidatas UNA sola vez, al
--- conectarse, para ver cuáles existen -- no dibuja nada todavía, solo loguea.
-local draw3DTested = false
-local function testDraw3DFunctions()
-    if draw3DTested then return end
-    draw3DTested = true
-
-    ac.log("[FORMATION] --- Probando funciones de render 3D candidatas ---")
-    local okRender, renderExists = pcall(function() return render ~= nil end)
-    ac.log("[FORMATION] namespace 'render' existe = " .. tostring(okRender and renderExists))
-
-    local candidates = {
-        "debugText", "debugSphere", "debugQuad", "debugLine", "debugCross",
-        "debugPoint", "debugArrow", "debugCircle", "debugBox"
-    }
-    if okRender and renderExists then
-        for _, name in ipairs(candidates) do
-            local ok, val = pcall(function() return render[name] end)
-            ac.log("[FORMATION] render." .. name .. " = " .. tostring(ok and val or "no existe"))
-        end
-    end
-
-    -- También probamos si ac.* tiene algo directo para esto, y si world-to-screen existe
-    local okW2S, w2sVal = pcall(function() return ac.worldToScreen end)
-    ac.log("[FORMATION] ac.worldToScreen = " .. tostring(okW2S and w2sVal or "no existe"))
-end
-
-function script.draw3D()
-    testDraw3DFunctions()
-end
-
 -- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
 -- el ID 7 -- solo se muestra cuando el menú lo tiene seleccionado. =====
 local editingPanelId = 0
@@ -249,6 +217,36 @@ ac.onOnlineWelcome(function(message, config)
         adminFlag
     )
 end)
+
+-- ===== Marcador 3D en el piso, en el casillero de grilla (como el resaltado de boxes) =====
+-- Primera vez que usamos script.draw3D y el namespace "render" en este proyecto. Ya
+-- confirmamos que existen render.debugBox, render.debugCross, render.debugSphere, etc.,
+-- pero no la firma exacta de parámetros -- se prueba con un valor razonable, protegido con
+-- pcall, y se loguea el resultado UNA sola vez para poder ajustar según lo que se vea.
+local draw3DErrorLogged = false
+
+function script.draw3D()
+    if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil then return end
+    if not (state.enabled and navActive) then return end -- solo mientras el cartel de navegación está activo, para no ensuciar la pista todo el tiempo
+
+    local target = gridSlotWorldPos[myGridPosition]
+    local pos = vec3(target.x, target.y, target.z)
+    local red = rgbm(1, 0, 0, 0.8)
+
+    local okBox, errBox = pcall(function()
+        render.debugBox(pos, vec3(1.2, 0.05, 1.2), red)
+    end)
+
+    if not okBox and not draw3DErrorLogged then
+        draw3DErrorLogged = true
+        ac.log("[FORMATION] render.debugBox falló: " .. tostring(errBox))
+        -- Alternativa más simple como respaldo, por si el problema es específico de debugBox
+        local okCross, errCross = pcall(function()
+            render.debugCross(pos, 1.5, red)
+        end)
+        ac.log("[FORMATION] render.debugCross como respaldo: " .. tostring(okCross and "funcionó" or errCross))
+    end
+end
 
 function script.update(dt)
     -- Vigila la transición a sesión de Carrera en TODOS los frames (no en un solo evento
