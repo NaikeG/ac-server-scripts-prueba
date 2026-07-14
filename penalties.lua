@@ -164,6 +164,16 @@ local function isAnyoneHavingIncident()
     return anyIncident
 end
 
+-- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
+-- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
+local function safeAtan2(y, x)
+    local ok, result = pcall(function() return math.atan2(y, x) end)
+    if ok then return result end
+    local ok2, result2 = pcall(function() return math.atan(y, x) end)
+    if ok2 then return result2 end
+    return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
+end
+
 -- ===== Detección aproximada de bandera azul (auto más rápido/adelantado cerca) =====
 -- No hay campo nativo expuesto a Lua para esto, así que lo aproximamos, con distinta lógica
 -- según el tipo de sesión: en Práctica no se muestra nunca; en Clasificación se usa diferencia
@@ -171,16 +181,18 @@ end
 -- realmente viene mucho más rápido); en Carrera se usa vueltas de diferencia (te están por doblar).
 local BLUEFLAG_DISTANCE_METERS = 60
 local BLUEFLAG_QUALY_SPEED_DIFF_KMH = 30
+local BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR = 1.15 -- además de la diferencia absoluta, tiene que ir un 15% más rápido en términos relativos -- filtra el caso de "los dos van rápido, en distintos puntos de sus respectivas vueltas"
 local QUALY_SUSTAIN_SECONDS = 1.5
 local qualySpeedDiffTimer = 0
 local RACE_LAP_SUSTAIN_SECONDS = 1.5 -- filtra el "1 de diferencia" transitorio justo al cruzar la línea de largada tras la Vuelta Previa
 local raceLapDiffTimer = 0
+local lastDistanceToCar = {} -- [carIndex] = última distancia conocida a ese auto, para exigir que se esté achicando de verdad
 
 local function checkBlueFlagApprox(dt)
     if isCarInPit() then
         qualySpeedDiffTimer = 0
         raceLapDiffTimer = 0
-        return false
+        return false, nil
     end
 
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
@@ -189,12 +201,14 @@ local function checkBlueFlagApprox(dt)
     if not isRaceSession and not isQualifySession then
         qualySpeedDiffTimer = 0
         raceLapDiffTimer = 0
-        return false -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
+        return false, nil -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
     end
 
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     local okMyPos, myPos = pcall(function() return car.position end)
+    local okLook, look = pcall(function() return car.look end)
     local foundCandidate = false
+    local foundDirection = nil -- ángulo en radianes hacia el auto (0=adelante, ±π=atrás), solo para Clasificación
 
     if okCount and okMyPos then
         for i = 1, carsCount - 1 do
@@ -210,19 +224,55 @@ local function checkBlueFlagApprox(dt)
 
                     local okPos, otherPos = pcall(function() return otherCar.position end)
                     local qualifies = false
+                    local candidateDirection = nil
 
                     if okPos and not otherInPit then
                         if isRaceSession then
                             local okLap, otherLap = pcall(function() return otherCar.lapCount end)
                             qualifies = okLap and otherLap > car.lapCount
                         else
-                            -- Clasificación: diferencia de velocidad, ignorando autos que están
-                            -- en una vuelta invalidada (si cortaron y no cuenta, no corresponde
-                            -- que su velocidad le muestre el cartel a nadie)
+                            -- Clasificación: diferencia de velocidad (absoluta Y relativa, para filtrar
+                            -- el caso de "los dos van rápido, en distintos puntos de sus vueltas"),
+                            -- ignorando autos en vuelta inválida, que además vengan de ATRÁS mío
+                            -- (no de adelante), y que se estén acercando de verdad (no solo que estén
+                            -- cerca en un instante).
                             local okValid, otherValid = pcall(function() return otherCar.isLapValid end)
                             local otherLapCountsAsValid = (not okValid) or otherValid
                             local okSpeed, otherSpeed = pcall(function() return otherCar.speedKmh end)
-                            qualifies = okSpeed and otherLapCountsAsValid and (otherSpeed - car.speedKmh) > BLUEFLAG_QUALY_SPEED_DIFF_KMH
+
+                            local speedOk = okSpeed and otherLapCountsAsValid
+                                and (otherSpeed - car.speedKmh) > BLUEFLAG_QUALY_SPEED_DIFF_KMH
+                                and otherSpeed > car.speedKmh * BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR
+
+                            local isBehind = false
+                            local angleRad = nil
+                            if speedOk and okLook and look ~= nil then
+                                local toOtherX = otherPos.x - myPos.x
+                                local toOtherZ = otherPos.z - myPos.z
+                                local dot = look.x * toOtherX + look.z * toOtherZ
+                                local cross = look.x * toOtherZ - look.z * toOtherX
+                                isBehind = dot < 0
+                                angleRad = safeAtan2(cross, dot)
+                            end
+
+                            local isClosing = false
+                            if speedOk and isBehind then
+                                local dx = otherPos.x - myPos.x
+                                local dz = otherPos.z - myPos.z
+                                local currentDist = math.sqrt(dx * dx + dz * dz)
+                                local prevDist = lastDistanceToCar[i]
+                                -- Si no hay dato previo (primera vez que se lo ve calificar), se da
+                                -- el beneficio de la duda; de ahí en más, tiene que achicarse de verdad.
+                                isClosing = prevDist == nil or currentDist < prevDist
+                                lastDistanceToCar[i] = currentDist
+                            else
+                                lastDistanceToCar[i] = nil
+                            end
+
+                            qualifies = speedOk and isBehind and isClosing
+                            if qualifies then
+                                candidateDirection = angleRad
+                            end
                         end
                     end
 
@@ -233,6 +283,7 @@ local function checkBlueFlagApprox(dt)
                         local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
                         if dist < BLUEFLAG_DISTANCE_METERS then
                             foundCandidate = true
+                            foundDirection = candidateDirection
                             break
                         end
                     end
@@ -251,7 +302,7 @@ local function checkBlueFlagApprox(dt)
         else
             raceLapDiffTimer = 0
         end
-        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS
+        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS, nil
     end
 
     -- En Clasificación, la diferencia de velocidad tiene que sostenerse un rato antes de
@@ -261,14 +312,15 @@ local function checkBlueFlagApprox(dt)
     else
         qualySpeedDiffTimer = 0
     end
-    return qualySpeedDiffTimer >= QUALY_SUSTAIN_SECONDS
+    local active = qualySpeedDiffTimer >= QUALY_SUSTAIN_SECONDS
+    return active, active and foundDirection or nil
 end
 
 local function isUnderBlueFlag(dt)
     if blueFlagField ~= nil then
         local ok, val = pcall(function() return car[blueFlagField] end)
-        if ok and val == true then return true end
-        return false
+        if ok and val == true then return true, nil end
+        return false, nil
     end
     return checkBlueFlagApprox(dt)
 end
@@ -302,6 +354,73 @@ local function diagnoseOtherCars()
     end
 end
 
+-- Dibuja una flecha como gráfico (no como texto), rotada al ángulo exacto -- mismo helper
+-- que usamos en vueltaPrevia.lua para el cartel de navegación a la grilla.
+-- angleRad: 0 = derecho para arriba/adelante, positivo = hacia la derecha (sentido horario)
+local function drawArrow(cx, cy, angleRad, length, color, thickness)
+    local dx = math.sin(angleRad)
+    local dy = -math.cos(angleRad)
+    local tipX, tipY = cx + dx * length * 0.5, cy + dy * length * 0.5
+    local tailX, tailY = cx - dx * length * 0.5, cy - dy * length * 0.5
+
+    ui.drawLine(vec2(tailX, tailY), vec2(tipX, tipY), color, thickness)
+
+    local headLen = length * 0.4
+    local headAngle = math.rad(28)
+    local a1 = angleRad + math.pi - headAngle
+    local a2 = angleRad + math.pi + headAngle
+    local h1x, h1y = tipX + math.sin(a1) * headLen, tipY - math.cos(a1) * headLen
+    local h2x, h2y = tipX + math.sin(a2) * headLen, tipY - math.cos(a2) * headLen
+    ui.drawLine(vec2(tipX, tipY), vec2(h1x, h1y), color, thickness)
+    ui.drawLine(vec2(tipX, tipY), vec2(h2x, h2y), color, thickness)
+end
+
+-- Cartel cuadrado dedicado a la bandera azul, mismo estilo que el ícono "SC" de
+-- safetyCar.lua: caja negra arriba (acá con flecha + texto) y franja abajo que titila
+-- (acá azul, en vez de amarilla).
+local function drawBlueFlagPanel(x, y, angle, alpha)
+    local boxWidth = 220
+    local blackHeight = 90
+    local blueHeight = 60
+
+    ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.05, 0.05, 0.05, alpha))
+    ui.drawRect(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
+
+    local ARROW_SIZE = 44
+    local arrowCenterX = x + 24 + ARROW_SIZE * 0.5
+    local arrowCenterY = y + blackHeight * 0.5
+    drawArrow(arrowCenterX, arrowCenterY, angle or 0, ARROW_SIZE, rgbm(1, 1, 1, alpha), 4)
+
+    ui.pushFont(ui.Font.Small)
+    local line1, line2 = "VEHÍCULO", "RÁPIDO"
+    local l1Size = ui.measureText(line1)
+    local l2Size = ui.measureText(line2)
+    local textX = arrowCenterX + ARROW_SIZE * 0.5 + 14
+
+    ui.setCursor(vec2(textX, y + blackHeight * 0.5 - l1Size.y - 1))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, alpha))
+    ui.text(line1)
+    ui.popStyleColor()
+
+    ui.setCursor(vec2(textX, y + blackHeight * 0.5 + 1))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, alpha))
+    ui.text(line2)
+    ui.popStyleColor()
+    ui.popFont()
+
+    -- Franja azul intermitente (mismo timing que la franja amarilla de safetyCar.lua)
+    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+    local barY = y + blackHeight
+    if blinkOn then
+        ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.15, 0.45, 1.0, alpha))
+    else
+        ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.04, 0.09, 0.22, alpha))
+    end
+    ui.drawRect(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
+
+    return boxWidth, blackHeight + blueHeight
+end
+
 -- ===== Cartel en pantalla (mismo estilo F1 usado en announcements.lua: fondo negro, marco de color) =====
 local banner = { label = "", value = "", color = rgbm(1, 1, 1, 1), timer = 0, alpha = 0 }
 
@@ -325,12 +444,22 @@ local function getMousePos()
     return nil
 end
 
-local bannerPosCfg = ac.storage({
-    posX = (screen.w - 620) * 0.5 / screen.w,
-    posY = 200 / 1080
+-- Ambas posiciones van en UNA sola llamada a ac.storage() (no separadas), para eliminar
+-- cualquier posibilidad de que terminen compartiendo el mismo espacio de guardado por tener
+-- forma parecida -- el mismo bug que ya encontramos y solucionamos en otros scripts.
+local panelPositions = ac.storage({
+    bannerPosX = (screen.w - 620) * 0.5 / screen.w,
+    bannerPosY = 200 / 1080,
+    blueFlagPosX = (screen.w - 220) * 0.5 / screen.w,
+    blueFlagPosY = 300 / 1080
 })
 local bannerDragging = false
 local bannerDragOffsetX, bannerDragOffsetY = 0, 0
+
+-- Cartel cuadrado dedicado a la bandera azul (estilo SC: caja negra + franja que titila)
+local blueFlagPanel = { timer = 0, alpha = 0, angle = 0 }
+local blueFlagDragging = false
+local blueFlagDragOffsetX, blueFlagDragOffsetY = 0, 0
 
 -- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
 -- ID global de este cartel: 5 (ver la lista completa de IDs en announcements.lua)
@@ -457,6 +586,7 @@ ac.onOnlineWelcome(function(message, config)
     GEARBOX_LOCK_SECONDS = config:get("PENALTIES", "GEARBOX_LOCK_SECONDS", 5)
     BLUEFLAG_DISTANCE_METERS = config:get("PENALTIES", "BLUEFLAG_DISTANCE_METERS", 60)
     BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
+    BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR = config:get("PENALTIES", "BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR", 1.15)
     INCIDENT_SPEED_THRESHOLD_KMH = config:get("PENALTIES", "INCIDENT_SPEED_THRESHOLD_KMH", 25)
     INCIDENT_MAX_DURATION_SECONDS = config:get("PENALTIES", "INCIDENT_MAX_DURATION_SECONDS", 30)
     GRACE_AFTER_PENALTY_SECONDS = config:get("PENALTIES", "GRACE_AFTER_PENALTY_SECONDS", 10)
@@ -529,8 +659,8 @@ function script.drawUI()
         local panelWidth = math.max(labelSize.x, valueSize.x) + 40
         local panelHeight = labelSize.y + valueSize.y + 26
 
-        local baseX = bannerPosCfg.posX * screen.w
-        local baseY = bannerPosCfg.posY * screen.h
+        local baseX = panelPositions.bannerPosX * screen.w
+        local baseY = panelPositions.bannerPosY * screen.h
 
         if mp ~= nil then
             local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
@@ -544,8 +674,8 @@ function script.drawUI()
                 if mouseIsDown then
                     baseX = mp.x - bannerDragOffsetX
                     baseY = mp.y - bannerDragOffsetY
-                    bannerPosCfg.posX = baseX / screen.w
-                    bannerPosCfg.posY = baseY / screen.h
+                    panelPositions.bannerPosX = baseX / screen.w
+                    panelPositions.bannerPosY = baseY / screen.h
                 else
                     bannerDragging = false
                     panelDragStateEvent({ dragging = false, panelId = 0 })
@@ -573,6 +703,38 @@ function script.drawUI()
         ui.popStyleColor()
         ui.popFont()
     end
+
+    -- Panel cuadrado dedicado a la bandera azul (estilo SC + flecha), independiente del
+    -- cartel de arriba -- no se muestra nada más junto con esto.
+    if blueFlagPanel.alpha > 0 and not shouldHideForDrag() then
+        local a = blueFlagPanel.alpha
+        local baseX = panelPositions.blueFlagPosX * screen.w
+        local baseY = panelPositions.blueFlagPosY * screen.h
+        local boxWidth, boxHeight = 220, 150 -- tamaño fijo conocido (90+60), para el hitbox de arrastre
+
+        if mp ~= nil then
+            local overBox = mp.x >= baseX and mp.x <= baseX + boxWidth and mp.y >= baseY and mp.y <= baseY + boxHeight
+            if not blueFlagDragging and mouseIsDown and overBox then
+                blueFlagDragging = true
+                blueFlagDragOffsetX = mp.x - baseX
+                blueFlagDragOffsetY = mp.y - baseY
+                panelDragStateEvent({ dragging = true, panelId = MY_PANEL_ID })
+            end
+            if blueFlagDragging then
+                if mouseIsDown then
+                    baseX = mp.x - blueFlagDragOffsetX
+                    baseY = mp.y - blueFlagDragOffsetY
+                    panelPositions.blueFlagPosX = baseX / screen.w
+                    panelPositions.blueFlagPosY = baseY / screen.h
+                else
+                    blueFlagDragging = false
+                    panelDragStateEvent({ dragging = false, panelId = 0 })
+                end
+            end
+        end
+
+        drawBlueFlagPanel(baseX, baseY, blueFlagPanel.angle, a)
+    end
 end
 
 -- ===== Loop principal =====
@@ -590,13 +752,21 @@ function script.update(dt)
         banner.alpha = math.max(banner.alpha - 0.10, 0)
     end
 
-    -- Bandera azul: aviso simple (cartel + sonido), sin sanción automática.
-    -- Se dispara solo en el momento en que la bandera pasa de apagada a encendida (flanco).
-    local nowUnderBlueFlag = isUnderBlueFlag(dt)
+    if blueFlagPanel.timer > 0 then
+        blueFlagPanel.timer = blueFlagPanel.timer - dt
+        blueFlagPanel.alpha = math.min(blueFlagPanel.alpha + 0.10, 1)
+    else
+        blueFlagPanel.alpha = math.max(blueFlagPanel.alpha - 0.10, 0)
+    end
+
+    -- Bandera azul: cartel cuadrado dedicado (estilo SC, con flecha), no el cartel rectangular
+    -- compartido con el aviso de Safety Car. Se dispara en el flanco de apagada -> encendida.
+    local nowUnderBlueFlag, blueFlagAngle = isUnderBlueFlag(dt)
     if nowUnderBlueFlag and not wasUnderBlueFlag then
-        showBanner("ATENCIÓN", "DAR PASO A VEHÍCULOS RÁPIDOS", rgbm(0.15, 0.45, 1.0, 1), 5)
+        blueFlagPanel.timer = 5
+        blueFlagPanel.angle = blueFlagAngle
         playSound(blueFlagSound, "bandera azul")
-        ac.log("[PENALTIES] Bandera azul mostrada a " .. car:driverName())
+        ac.log("[PENALTIES] Bandera azul mostrada a " .. car:driverName() .. " (ángulo: " .. tostring(blueFlagAngle) .. ")")
     end
     wasUnderBlueFlag = nowUnderBlueFlag
 
