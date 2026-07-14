@@ -231,10 +231,15 @@ function script.draw3D()
 
     local target = gridSlotWorldPos[myGridPosition]
     local pos = vec3(target.x, target.y, target.z)
-    local red = rgbm(1, 0, 0, 0.8)
+    local red = rgbm(1, 0, 0, 1) -- opacidad al máximo, para que se vea bien marcado
 
+    -- Medidas aproximadas de un auto de carreras estándar: ~2m de ancho x ~4.5m de largo.
+    -- OJO: como el cuadrado no gira para alinearse con la dirección de la pista en ese punto
+    -- exacto (no confirmamos si render.debugBox soporta rotación), puede que en algunos
+    -- circuitos se vea "cruzado" en vez de alineado con el sentido de la pista -- avisame si
+    -- lo ves rotado 90° y probamos invirtiendo ancho/largo.
     local okBox, errBox = pcall(function()
-        render.debugBox(pos, vec3(1.2, 0.05, 1.2), red)
+        render.debugBox(pos, vec3(2.0, 0.08, 4.5), red)
     end)
 
     if not okBox and not draw3DErrorLogged then
