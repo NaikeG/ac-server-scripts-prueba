@@ -375,41 +375,24 @@ local function drawArrow(cx, cy, angleRad, length, color, thickness)
     ui.drawLine(vec2(tipX, tipY), vec2(h2x, h2y), color, thickness)
 end
 
--- Cartel cuadrado dedicado a la bandera azul, mismo estilo que el ícono "SC" de
--- safetyCar.lua: caja negra arriba (acá con flecha + texto) y franja abajo que titila
--- (acá azul, en vez de amarilla).
+-- Cartel cuadrado dedicado a la bandera azul, MISMO TAMAÑO que el ícono "SC" de
+-- safetyCar.lua (150x150: 70 de caja negra + 80 de franja): acá la caja negra tiene la
+-- flecha grande centrada, y la franja (azul en vez de amarilla, parpadeo más rápido) tiene
+-- el texto "CUIDADO".
 local function drawBlueFlagPanel(x, y, angle, alpha)
-    local boxWidth = 220
-    local blackHeight = 90
-    local blueHeight = 60
+    local boxWidth = 150
+    local blackHeight = 70
+    local blueHeight = 80
 
     ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.05, 0.05, 0.05, alpha))
     ui.drawRect(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
 
-    local ARROW_SIZE = 44
-    local arrowCenterX = x + 24 + ARROW_SIZE * 0.5
-    local arrowCenterY = y + blackHeight * 0.5
-    drawArrow(arrowCenterX, arrowCenterY, angle or 0, ARROW_SIZE, rgbm(1, 1, 1, alpha), 4)
+    local ARROW_SIZE = 50
+    drawArrow(x + boxWidth * 0.5, y + blackHeight * 0.5, angle or 0, ARROW_SIZE, rgbm(1, 1, 1, alpha), 5)
 
-    ui.pushFont(ui.Font.Small)
-    local line1, line2 = "VEHÍCULO", "RÁPIDO"
-    local l1Size = ui.measureText(line1)
-    local l2Size = ui.measureText(line2)
-    local textX = arrowCenterX + ARROW_SIZE * 0.5 + 14
-
-    ui.setCursor(vec2(textX, y + blackHeight * 0.5 - l1Size.y - 1))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, alpha))
-    ui.text(line1)
-    ui.popStyleColor()
-
-    ui.setCursor(vec2(textX, y + blackHeight * 0.5 + 1))
-    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, alpha))
-    ui.text(line2)
-    ui.popStyleColor()
-    ui.popFont()
-
-    -- Franja azul intermitente (mismo timing que la franja amarilla de safetyCar.lua)
-    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+    -- Franja azul intermitente (el doble de rápido que la franja amarilla de safetyCar.lua)
+    -- con el texto "CUIDADO" centrado adentro
+    local blinkOn = math.floor(sim.currentSessionTime / 200) % 2 == 0
     local barY = y + blackHeight
     if blinkOn then
         ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.15, 0.45, 1.0, alpha))
@@ -417,6 +400,15 @@ local function drawBlueFlagPanel(x, y, angle, alpha)
         ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.04, 0.09, 0.22, alpha))
     end
     ui.drawRect(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
+
+    ui.pushFont(ui.Font.Title)
+    local text = "CUIDADO"
+    local textSize = ui.measureText(text)
+    ui.setCursor(vec2(x + (boxWidth - textSize.x) * 0.5, barY + (blueHeight - textSize.y) * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, alpha))
+    ui.text(text)
+    ui.popStyleColor()
+    ui.popFont()
 
     return boxWidth, blackHeight + blueHeight
 end
@@ -710,7 +702,7 @@ function script.drawUI()
         local a = blueFlagPanel.alpha
         local baseX = panelPositions.blueFlagPosX * screen.w
         local baseY = panelPositions.blueFlagPosY * screen.h
-        local boxWidth, boxHeight = 220, 150 -- tamaño fijo conocido (90+60), para el hitbox de arrastre
+        local boxWidth, boxHeight = 150, 150 -- tamaño fijo conocido (70+80), para el hitbox de arrastre
 
         if mp ~= nil then
             local overBox = mp.x >= baseX and mp.x <= baseX + boxWidth and mp.y >= baseY and mp.y <= baseY + boxHeight
