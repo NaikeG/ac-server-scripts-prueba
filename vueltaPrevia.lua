@@ -79,6 +79,17 @@ local GRID_CAPTURE_DELAY_SECONDS = 4 -- espera a que se termine de acomodar todo
 -- Mapa final: [puesto de grilla] = posición del mundo (vec3) capturada ahí
 local gridSlotWorldPos = {}
 local myGridPosition = nil
+local gridRowAngle = nil -- ángulo (radianes) de orientación de la grilla, capturado junto a las posiciones
+
+-- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
+-- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
+local function safeAtan2(y, x)
+    local ok, result = pcall(function() return math.atan2(y, x) end)
+    if ok then return result end
+    local ok2, result2 = pcall(function() return math.atan(y, x) end)
+    if ok2 then return result2 end
+    return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
+end
 
 local function captureGridMap()
     local okCount, carsCount = pcall(function() return sim.carsCount end)
@@ -128,6 +139,18 @@ local function captureGridMap()
         end
     end
     ac.log("[FORMATION] Mi puesto de grilla: " .. tostring(myGridPosition))
+
+    -- También se captura MI PROPIA orientación en este mismo instante (en mi propio
+    -- casillero, así que está bien orientada) -- se usa como referencia para dibujar el
+    -- marcador del piso alineado con el sentido real de la pista en la grilla, ya que no
+    -- confirmamos si render.debugBox soporta rotación. Asume que todas las filas de la
+    -- grilla son aproximadamente paralelas entre sí, lo cual es así en la gran mayoría de
+    -- los circuitos.
+    local okLook, myLook = pcall(function() return car.look end)
+    if okLook and myLook ~= nil then
+        gridRowAngle = safeAtan2(myLook.x, myLook.z) -- ángulo de la grilla en el plano XZ
+        ac.log("[FORMATION] Ángulo de la grilla capturado: " .. tostring(gridRowAngle))
+    end
 end
 
 local wasRaceSession = false
@@ -219,37 +242,45 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 -- ===== Marcador 3D en el piso, en el casillero de grilla (como el resaltado de boxes) =====
--- Primera vez que usamos script.draw3D y el namespace "render" en este proyecto. Ya
--- confirmamos que existen render.debugBox, render.debugCross, render.debugSphere, etc.,
--- pero no la firma exacta de parámetros -- se prueba con un valor razonable, protegido con
--- pcall, y se loguea el resultado UNA sola vez para poder ajustar según lo que se vea.
-local draw3DErrorLogged = false
+-- Se arma con 4 líneas (render.debugLine, ya confirmado) formando un rectángulo, en vez de
+-- render.debugBox -- así lo podemos rotar nosotros mismos con matemática simple, alineado al
+-- sentido real de la pista (gridRowAngle), sin depender de un parámetro de rotación de
+-- debugBox que no confirmamos que exista.
+local BOX_WIDTH = 2.4  -- ancho del auto
+local BOX_LENGTH = 4.6 -- largo del auto
 
 function script.draw3D()
-    if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil then return end
-    if not (state.enabled and navActive) then return end -- solo mientras el cartel de navegación está activo, para no ensuciar la pista todo el tiempo
+    if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil or gridRowAngle == nil then return end
+    if not (state.enabled and navActive) then return end -- solo mientras el cartel de navegación está activo
 
     local target = gridSlotWorldPos[myGridPosition]
-    local pos = vec3(target.x, target.y, target.z)
-    local red = rgbm(1, 0, 0, 1) -- opacidad al máximo, para que se vea bien marcado
+    local halfW, halfL = BOX_WIDTH * 0.5, BOX_LENGTH * 0.5
+    local sin, cos = math.sin(gridRowAngle), math.cos(gridRowAngle)
 
-    -- Medidas aproximadas de un auto de carreras estándar: ~2m de ancho x ~4.5m de largo.
-    -- OJO: como el cuadrado no gira para alinearse con la dirección de la pista en ese punto
-    -- exacto (no confirmamos si render.debugBox soporta rotación), puede que en algunos
-    -- circuitos se vea "cruzado" en vez de alineado con el sentido de la pista -- avisame si
-    -- lo ves rotado 90° y probamos invirtiendo ancho/largo.
-    local okBox, errBox = pcall(function()
-        render.debugBox(pos, vec3(2.0, 0.08, 4.5), red)
+    -- 4 esquinas del rectángulo, rotadas según gridRowAngle alrededor del centro (target)
+    local function corner(lx, lz)
+        local rx = lx * cos - lz * sin
+        local rz = lx * sin + lz * cos
+        return vec3(target.x + rx, target.y + 0.05, target.z + rz)
+    end
+
+    local c1 = corner(-halfW, -halfL)
+    local c2 = corner(halfW, -halfL)
+    local c3 = corner(halfW, halfL)
+    local c4 = corner(-halfW, halfL)
+
+    local red = rgbm(1, 0, 0, 1)
+    local ok, err = pcall(function()
+        render.debugLine(c1, c2, red)
+        render.debugLine(c2, c3, red)
+        render.debugLine(c3, c4, red)
+        render.debugLine(c4, c1, red)
+        -- Diagonales también, para que se vea más como un cartel sólido y no solo un marco fino
+        render.debugLine(c1, c3, red)
+        render.debugLine(c2, c4, red)
     end)
-
-    if not okBox and not draw3DErrorLogged then
-        draw3DErrorLogged = true
-        ac.log("[FORMATION] render.debugBox falló: " .. tostring(errBox))
-        -- Alternativa más simple como respaldo, por si el problema es específico de debugBox
-        local okCross, errCross = pcall(function()
-            render.debugCross(pos, 1.5, red)
-        end)
-        ac.log("[FORMATION] render.debugCross como respaldo: " .. tostring(okCross and "funcionó" or errCross))
+    if not ok then
+        ac.log("[FORMATION] Error dibujando el marcador de grilla: " .. tostring(err))
     end
 end
 
@@ -279,16 +310,6 @@ function script.update(dt)
     else
         state.alpha = math.max(state.alpha - dt * speed, 0)
     end
-end
-
--- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
--- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
-local function safeAtan2(y, x)
-    local ok, result = pcall(function() return math.atan2(y, x) end)
-    if ok then return result end
-    local ok2, result2 = pcall(function() return math.atan(y, x) end)
-    if ok2 then return result2 end
-    return math.atan(y / x) -- último recurso, no maneja todos los cuadrantes bien
 end
 
 -- Se probó "Huge" pero resultó demasiado grande (cartel enorme); se usa Title, que ya
