@@ -174,6 +174,7 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     end
 
     overrideTimer = 1
+    requestLightsSyncEvent({})
 
     ui.registerOnlineExtra(ui.Icons.TrafficLight, "Start Lights", function() return true end, nil, function(okClicked)
         math.randomseed(os.time())
@@ -192,8 +193,17 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
             payload = { startTime = sim.currentSessionTime + seqDuration, delayTime = 99999999 }
         end
         triggerStart(payload)
+        -- Reenvíos distribuidos en una ventana más amplia (antes solo cubrían el primer
+        -- medio segundo). Como el mensaje lleva un horario ABSOLUTO, reenviarlo más tarde no
+        -- desincroniza a nadie -- solo aumenta las chances de que a alguien con un corte de
+        -- conexión más largo que un instante igual le llegue alguna copia, dentro de la
+        -- ventana real de varios segundos que suele haber hasta el verde.
         scheduleResend(payload, 0.2)
         scheduleResend(payload, 0.5)
+        scheduleResend(payload, 1)
+        scheduleResend(payload, 2)
+        scheduleResend(payload, 4)
+        scheduleResend(payload, 7)
     end, adminFlag)
 
     if isf1style == 1 then
@@ -279,6 +289,36 @@ function script.update(dt)
         end
     end
 end
+
+-- ===== Sincronización para quien se conecta después de que ya se disparó la secuencia =====
+-- El reenvío triple (más abajo) solo ayuda a quien YA estaba conectado en el momento del
+-- click -- si alguien se conecta o reconecta DESPUÉS (por ejemplo durante la propia Vuelta
+-- Previa), nunca recibe ningún aviso, porque los eventos no se repiten para tardíos. Con
+-- esto, al conectarte, le preguntás a los demás si ya hay una secuencia en curso.
+requestLightsSyncEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Request Lights Sync")
+}, function(sender, message)
+    if startTime > 0 then
+        lightsSyncResponseEvent({ startTime = startTime, delayTime = delayTime })
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+lightsSyncResponseEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Lights Sync Response"),
+    startTime = ac.StructItem.float(),
+    delayTime = ac.StructItem.float()
+}, function(sender, message)
+    if startTime == 0 then -- solo si todavía no tengo ninguna secuencia propia
+        startTime = message.startTime
+        delayTime = message.delayTime
+        if sim.currentSessionTime < maxStartArmWindow then
+            started = false
+        end
+        ac.log("[STARTLIGHTS] Sincronizado con secuencia ya en curso (llegué tarde a la conexión)")
+    end
+end,
+ac.SharedNamespace.ServerScript)
 
 triggerStart = ac.OnlineEvent({
     key = ac.StructItem.key("Start Lights"),
