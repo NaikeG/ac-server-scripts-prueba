@@ -450,14 +450,24 @@ local function drawArrow(cx, cy, angleRad, length, color, thickness)
 
     ui.drawLine(vec2(tailX, tailY), vec2(tipX, tipY), color, thickness)
 
-    local headLen = length * 0.4
-    local headAngle = math.rad(28)
+    local headLen = length * 0.42
+    local headAngle = math.rad(26)
     local a1 = angleRad + math.pi - headAngle
     local a2 = angleRad + math.pi + headAngle
     local h1x, h1y = tipX + math.sin(a1) * headLen, tipY - math.cos(a1) * headLen
     local h2x, h2y = tipX + math.sin(a2) * headLen, tipY - math.cos(a2) * headLen
+
     ui.drawLine(vec2(tipX, tipY), vec2(h1x, h1y), color, thickness)
     ui.drawLine(vec2(tipX, tipY), vec2(h2x, h2y), color, thickness)
+    ui.drawLine(vec2(h1x, h1y), vec2(h2x, h2y), color, thickness)
+
+    local fillSteps = 5
+    for s = 1, fillSteps do
+        local t = s / (fillSteps + 1)
+        local px, py = tipX + (h1x - tipX) * t, tipY + (h1y - tipY) * t
+        local qx, qy = tipX + (h2x - tipX) * t, tipY + (h2y - tipY) * t
+        ui.drawLine(vec2(px, py), vec2(qx, qy), color, thickness)
+    end
 end
 
 function script.drawUI()
