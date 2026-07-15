@@ -79,7 +79,7 @@ local GRID_CAPTURE_DELAY_SECONDS = 4 -- espera a que se termine de acomodar todo
 -- Mapa final: [puesto de grilla] = posición del mundo (vec3) capturada ahí
 local gridSlotWorldPos = {}
 local myGridPosition = nil
-local gridRowAngle = nil -- ángulo (radianes) de orientación de la grilla, capturado junto a las posiciones
+local gridForwardX, gridForwardZ = nil, nil -- vector de orientación de la grilla (crudo, sin pasar por ángulo)
 
 -- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
 -- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
@@ -142,14 +142,18 @@ local function captureGridMap()
 
     -- También se captura MI PROPIA orientación en este mismo instante (en mi propio
     -- casillero, así que está bien orientada) -- se usa como referencia para dibujar el
-    -- marcador del piso alineado con el sentido real de la pista en la grilla, ya que no
-    -- confirmamos si render.debugBox soporta rotación. Asume que todas las filas de la
-    -- grilla son aproximadamente paralelas entre sí, lo cual es así en la gran mayoría de
-    -- los circuitos.
+    -- marcador del piso alineado con el sentido real de la pista en la grilla. Se guarda el
+    -- vector crudo (no un ángulo), para evitar líos de signo al reconstruirlo después.
+    -- Asume que todas las filas de la grilla son aproximadamente paralelas entre sí, lo cual
+    -- es así en la gran mayoría de los circuitos.
     local okLook, myLook = pcall(function() return car.look end)
     if okLook and myLook ~= nil then
-        gridRowAngle = safeAtan2(myLook.x, myLook.z) -- ángulo de la grilla en el plano XZ
-        ac.log("[FORMATION] Ángulo de la grilla capturado: " .. tostring(gridRowAngle))
+        local len = math.sqrt(myLook.x * myLook.x + myLook.z * myLook.z)
+        if len > 0.001 then
+            gridForwardX = myLook.x / len
+            gridForwardZ = myLook.z / len
+            ac.log("[FORMATION] Orientación de la grilla capturada: (" .. gridForwardX .. ", " .. gridForwardZ .. ")")
+        end
     end
 end
 
@@ -242,32 +246,35 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 -- ===== Marcador 3D en el piso, en el casillero de grilla (como el resaltado de boxes) =====
--- Se arma con 4 líneas (render.debugLine, ya confirmado) formando un rectángulo, en vez de
--- render.debugBox -- así lo podemos rotar nosotros mismos con matemática simple, alineado al
--- sentido real de la pista (gridRowAngle), sin depender de un parámetro de rotación de
--- debugBox que no confirmamos que exista.
+-- Se arma con líneas (render.debugLine, ya confirmado), no render.debugBox -- así lo podemos
+-- rotar nosotros mismos con vectores directos (forward/right), en vez de un ángulo -- más
+-- fácil de tener mal un signo con ángulos que con vectores.
 local BOX_WIDTH = 2.4  -- ancho del auto
 local BOX_LENGTH = 4.6 -- largo del auto
 
 function script.draw3D()
-    if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil or gridRowAngle == nil then return end
+    if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil then return end
+    if gridForwardX == nil or gridForwardZ == nil then return end
     if not (state.enabled and navActive) then return end -- solo mientras el cartel de navegación está activo
 
     local target = gridSlotWorldPos[myGridPosition]
     local halfW, halfL = BOX_WIDTH * 0.5, BOX_LENGTH * 0.5
-    local sin, cos = math.sin(gridRowAngle), math.cos(gridRowAngle)
 
-    -- 4 esquinas del rectángulo, rotadas según gridRowAngle alrededor del centro (target)
-    local function corner(lx, lz)
-        local rx = lx * cos - lz * sin
-        local rz = lx * sin + lz * cos
-        return vec3(target.x + rx, target.y + 0.05, target.z + rz)
+    -- Vector "adelante" (fx,fz) = la orientación capturada de la grilla. Vector "derecha"
+    -- (rx,rz), perpendicular, construido con la MISMA convención de cruz que usamos en
+    -- penalties.lua para izquierda/derecha (cross = fx*v.z - fz*v.x > 0 significa derecha),
+    -- para no introducir otro signo distinto en otra parte del proyecto.
+    local fx, fz = gridForwardX, gridForwardZ
+    local rx, rz = -fz, fx
+
+    local function corner(right, forward)
+        return vec3(target.x + rx * right + fx * forward, target.y + 0.05, target.z + rz * right + fz * forward)
     end
 
-    local c1 = corner(-halfW, -halfL)
-    local c2 = corner(halfW, -halfL)
-    local c3 = corner(halfW, halfL)
-    local c4 = corner(-halfW, halfL)
+    local c1 = corner(-halfW, -halfL) -- atrás-izquierda
+    local c2 = corner(halfW, -halfL)  -- atrás-derecha
+    local c3 = corner(halfW, halfL)   -- adelante-derecha
+    local c4 = corner(-halfW, halfL)  -- adelante-izquierda
 
     local red = rgbm(1, 0, 0, 1)
     local ok, err = pcall(function()
@@ -275,9 +282,21 @@ function script.draw3D()
         render.debugLine(c2, c3, red)
         render.debugLine(c3, c4, red)
         render.debugLine(c4, c1, red)
-        -- Diagonales también, para que se vea más como un cartel sólido y no solo un marco fino
-        render.debugLine(c1, c3, red)
+        render.debugLine(c1, c3, red) -- diagonales, para que se vea más sólido
         render.debugLine(c2, c4, red)
+
+        -- Flecha vertical roja, flotando arriba del casillero y apuntando hacia abajo
+        local topY = target.y + 3.0
+        local tipY = target.y + 0.15
+        local top = vec3(target.x, topY, target.z)
+        local tip = vec3(target.x, tipY, target.z)
+        render.debugLine(top, tip, red)
+
+        local headLen = 0.5
+        render.debugLine(tip, vec3(target.x + headLen, tipY + headLen, target.z), red)
+        render.debugLine(tip, vec3(target.x - headLen, tipY + headLen, target.z), red)
+        render.debugLine(tip, vec3(target.x, tipY + headLen, target.z + headLen), red)
+        render.debugLine(tip, vec3(target.x, tipY + headLen, target.z - headLen), red)
     end)
     if not ok then
         ac.log("[FORMATION] Error dibujando el marcador de grilla: " .. tostring(err))
@@ -622,19 +641,16 @@ function script.drawUI()
 
     if shouldRenderPanel and not shouldHideForDrag(NAV_PANEL_ID) then
         local okBlock, errBlock = pcall(function()
-        local label = "TU LUGAR DE LARGADA EN GRILLA N " .. tostring(displayPuesto)
         local valueText = math.floor(displayDistance) .. " m"
-        local ARROW_SIZE = 44 -- un poco más grande que antes, y ya no depende de ningún glifo de fuente
+        local ARROW_SIZE = 44
         local ARROW_GAP = 14
 
         ui.pushFont(biggestFont)
-        local labelSize = ui.measureText(label)
         local valueSize = ui.measureText(valueText)
         ui.popFont()
 
-        local valueRowWidth = ARROW_SIZE + ARROW_GAP + valueSize.x
-        local panelWidth = math.max(labelSize.x, valueRowWidth) + 30
-        local panelHeight = labelSize.y + math.max(valueSize.y, ARROW_SIZE) + 22
+        local panelWidth = ARROW_SIZE + ARROW_GAP + valueSize.x + 24
+        local panelHeight = math.max(valueSize.y, ARROW_SIZE) + 16
         local baseX = panelPositions.navPosX * screen.w - panelWidth * 0.5
         local baseY = panelPositions.navPosY * screen.h
 
@@ -664,34 +680,16 @@ function script.drawUI()
         ui.drawRectFilled(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0, 0, 0, 0.88), 10)
         ui.drawRect(vec2(baseX, baseY), vec2(baseX + panelWidth, baseY + panelHeight), rgbm(0.2, 0.8, 1.0, 1), 10, 0, 3)
 
-        ui.pushFont(biggestFont)
-        ui.setCursor(vec2(baseX + (panelWidth - labelSize.x) * 0.5, baseY + 4))
-        ui.pushStyleColor(ui.StyleColor.Text, rgbm(0.2, 0.8, 1.0, 1))
-        ui.text(label)
-        ui.popStyleColor()
-        ui.popFont()
-
-        -- Segunda fila: flecha (gráfico, no texto) + distancia, centradas juntas como grupo
-        local rowY = baseY + labelSize.y + 8
-        local rowHeight = math.max(valueSize.y, ARROW_SIZE)
-        local groupX = baseX + (panelWidth - valueRowWidth) * 0.5
-
-        local arrowCenterX = groupX + ARROW_SIZE * 0.5
-        local arrowCenterY = rowY + rowHeight * 0.5
+        local arrowCenterX = baseX + 12 + ARROW_SIZE * 0.5
+        local arrowCenterY = baseY + panelHeight * 0.5
         drawArrow(arrowCenterX, arrowCenterY, displayArrow, ARROW_SIZE, rgbm(1, 1, 1, 1), 5)
 
         ui.pushFont(biggestFont)
-        ui.setCursor(vec2(groupX + ARROW_SIZE + ARROW_GAP, rowY + (rowHeight - valueSize.y) * 0.5))
+        ui.setCursor(vec2(arrowCenterX + ARROW_SIZE * 0.5 + ARROW_GAP, baseY + (panelHeight - valueSize.y) * 0.5))
         ui.pushStyleColor(ui.StyleColor.Text, rgbm(1, 1, 1, 1))
         ui.text(valueText)
         ui.popStyleColor()
         ui.popFont()
-
-        navSizeLogTimer = navSizeLogTimer + 1
-        if navSizeLogTimer == 30 then -- se loguea una sola vez, medio segundo después de aparecer
-            ac.log("[FORMATION] usandoHuge=" .. tostring(biggestFont == ui.Font.Huge) .. " | Tamaño real: label alto=" ..
-                tostring(labelSize.y) .. "px, value alto=" .. tostring(valueSize.y) .. "px (con Title daba 24px)")
-        end
         end) -- cierra el pcall del bloque completo
         if not okBlock then
             ac.log("[FORMATION] NAV BLOCK ERROR: " .. tostring(errBlock))
