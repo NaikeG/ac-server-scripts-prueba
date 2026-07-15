@@ -209,6 +209,7 @@ local function checkBlueFlagApprox(dt)
     local okLook, look = pcall(function() return car.look end)
     local foundCandidate = false
     local foundDirection = nil -- ángulo en radianes hacia el auto (0=adelante, ±π=atrás), solo para Clasificación
+    local foundCarIndex = nil -- índice del auto que la disparó, para poder seguirlo en vivo después
 
     if okCount and okMyPos then
         for i = 1, carsCount - 1 do
@@ -284,6 +285,7 @@ local function checkBlueFlagApprox(dt)
                         if dist < BLUEFLAG_DISTANCE_METERS then
                             foundCandidate = true
                             foundDirection = candidateDirection
+                            foundCarIndex = i
                             break
                         end
                     end
@@ -302,7 +304,7 @@ local function checkBlueFlagApprox(dt)
         else
             raceLapDiffTimer = 0
         end
-        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS, nil
+        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS, nil, nil
     end
 
     -- En Clasificación, la diferencia de velocidad tiene que sostenerse un rato antes de
@@ -313,14 +315,14 @@ local function checkBlueFlagApprox(dt)
         qualySpeedDiffTimer = 0
     end
     local active = qualySpeedDiffTimer >= QUALY_SUSTAIN_SECONDS
-    return active, active and foundDirection or nil
+    return active, active and foundDirection or nil, active and foundCarIndex or nil
 end
 
 local function isUnderBlueFlag(dt)
     if blueFlagField ~= nil then
         local ok, val = pcall(function() return car[blueFlagField] end)
-        if ok and val == true then return true, nil end
-        return false, nil
+        if ok and val == true then return true, nil, nil end
+        return false, nil, nil
     end
     return checkBlueFlagApprox(dt)
 end
@@ -363,16 +365,29 @@ local function drawArrow(cx, cy, angleRad, length, color, thickness)
     local tipX, tipY = cx + dx * length * 0.5, cy + dy * length * 0.5
     local tailX, tailY = cx - dx * length * 0.5, cy - dy * length * 0.5
 
+    -- Vara
     ui.drawLine(vec2(tailX, tailY), vec2(tipX, tipY), color, thickness)
 
-    local headLen = length * 0.4
-    local headAngle = math.rad(28)
+    -- Cabeza "rellena": como no hay una función de triángulo relleno confirmada, se simula
+    -- con varias líneas paralelas entre la punta y la base, además del contorno.
+    local headLen = length * 0.42
+    local headAngle = math.rad(26)
     local a1 = angleRad + math.pi - headAngle
     local a2 = angleRad + math.pi + headAngle
     local h1x, h1y = tipX + math.sin(a1) * headLen, tipY - math.cos(a1) * headLen
     local h2x, h2y = tipX + math.sin(a2) * headLen, tipY - math.cos(a2) * headLen
+
     ui.drawLine(vec2(tipX, tipY), vec2(h1x, h1y), color, thickness)
     ui.drawLine(vec2(tipX, tipY), vec2(h2x, h2y), color, thickness)
+    ui.drawLine(vec2(h1x, h1y), vec2(h2x, h2y), color, thickness)
+
+    local fillSteps = 5
+    for s = 1, fillSteps do
+        local t = s / (fillSteps + 1)
+        local px, py = tipX + (h1x - tipX) * t, tipY + (h1y - tipY) * t
+        local qx, qy = tipX + (h2x - tipX) * t, tipY + (h2y - tipY) * t
+        ui.drawLine(vec2(px, py), vec2(qx, qy), color, thickness)
+    end
 end
 
 -- Cartel cuadrado dedicado a la bandera azul, MISMO TAMAÑO que el ícono "SC" de
@@ -731,6 +746,7 @@ end
 
 -- ===== Loop principal =====
 local wasUnderBlueFlag = false
+local blueFlagTrackedCarIndex = nil -- para poder seguir en vivo al auto que disparó la bandera azul
 
 function script.update(dt)
     if graceTimer > 0 then
@@ -752,15 +768,38 @@ function script.update(dt)
     end
 
     -- Bandera azul: cartel cuadrado dedicado (estilo SC, con flecha), no el cartel rectangular
-    -- compartido con el aviso de Safety Car. Se dispara en el flanco de apagada -> encendida.
-    local nowUnderBlueFlag, blueFlagAngle = isUnderBlueFlag(dt)
+    -- compartido con el aviso de Safety Car. Se dispara en el flanco de apagada -> encendida,
+    -- pero la FLECHA se recalcula todos los cuadros mientras el cartel esté visible, siguiendo
+    -- al auto específico que la disparó -- así no queda clavada en el ángulo del instante en
+    -- que se prendió, sigue en vivo la posición real del auto que se acerca.
+    local nowUnderBlueFlag, blueFlagAngle, blueFlagCarIdx = isUnderBlueFlag(dt)
     if nowUnderBlueFlag and not wasUnderBlueFlag then
         blueFlagPanel.timer = 5
         blueFlagPanel.angle = blueFlagAngle
+        blueFlagTrackedCarIndex = blueFlagCarIdx
         playSound(blueFlagSound, "bandera azul")
         ac.log("[PENALTIES] Bandera azul mostrada a " .. car:driverName() .. " (ángulo: " .. tostring(blueFlagAngle) .. ")")
     end
     wasUnderBlueFlag = nowUnderBlueFlag
+
+    -- Mientras el cartel siga visible, se recalcula el ángulo en vivo hacia el auto
+    -- rastreado (si sigue conectado), en vez de quedarse con el valor del instante inicial.
+    if blueFlagPanel.timer > 0 and blueFlagTrackedCarIndex ~= nil then
+        local okTracked, trackedCar = pcall(function() return ac.getCar(blueFlagTrackedCarIndex) end)
+        if okTracked and trackedCar then
+            local okConn, connected = pcall(function() return trackedCar.isConnected end)
+            local okPos, trackedPos = pcall(function() return trackedCar.position end)
+            local okMyPos, myPos = pcall(function() return car.position end)
+            local okLook, look = pcall(function() return car.look end)
+            if okConn and connected and okPos and okMyPos and okLook and look ~= nil then
+                local dx = trackedPos.x - myPos.x
+                local dz = trackedPos.z - myPos.z
+                local dot = look.x * dx + look.z * dz
+                local cross = look.x * dz - look.z * dx
+                blueFlagPanel.angle = safeAtan2(cross, dot)
+            end
+        end
+    end
 
     -- Adelantamiento bajo Safety Car: aviso de 15 segundos para devolver la posición antes de
     -- sancionar. CLAVE: si tras la sanción todavía no devolvió la posición, se lo vuelve a
