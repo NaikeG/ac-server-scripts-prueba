@@ -57,6 +57,15 @@ local delayTime = 0
 local greenForced = false -- true apenas CUALQUIER cliente detecta o recibe aviso de que llegó el verde
 local greenForcedAt = 0   -- sim.currentSessionTime local en el momento en que se tomó el verde (evita drift de reloj entre clientes)
 
+-- Cola de reenvíos del disparo de la secuencia (mismo mecanismo que en startLights.lua): se
+-- manda varias veces, distribuidas en varios segundos, para que a alguien con un corte de
+-- conexión puntual igual le llegue alguna copia. Como el mensaje lleva un horario ABSOLUTO,
+-- reenviarlo más tarde no desincroniza a nadie.
+local resendQueue = {}
+local function scheduleResend(payload, delaySeconds)
+    table.insert(resendQueue, { timer = delaySeconds, payload = payload })
+end
+
 -- Estado interno del restrictor
 local restrictorActive = false
 local restrictorTimer = 0
@@ -126,23 +135,32 @@ rollingStartEvent = ac.OnlineEvent({
     startTime = ac.StructItem.float(),
     delayTime = ac.StructItem.float()
 }, function(sender, message)
+    -- Si startTime/delayTime son IDÉNTICOS a los que ya tenía guardados para esta fase, es
+    -- un reenvío duplicado del mismo comando (no uno nuevo) -- no hay que reiniciar el
+    -- estado, si no un reenvío tardío que llega DESPUÉS de que ya se pasó a verde podría
+    -- resetear todo por error y volver a fase "sequence".
+    local isDuplicate = (message.phase == 2 and phase == "sequence" and
+        startTime == message.startTime and delayTime == message.delayTime)
+
     if message.phase == 1 then
         phase = "yellow"
         resetLightEdges()
     elseif message.phase == 2 then
-        phase = "sequence"
-        startTime = message.startTime
-        delayTime = message.delayTime
-        overSpeedFlag = false
-        greenCheckDone = false
-        greenForced = false
-        resetLightEdges()
+        if not isDuplicate then
+            phase = "sequence"
+            startTime = message.startTime
+            delayTime = message.delayTime
+            overSpeedFlag = false
+            greenCheckDone = false
+            greenForced = false
+            resetLightEdges()
+        end
     else
         phase = "off"
         restrictorActive = false
         restrictorTimer = 0
     end
-    ac.log("[ROLLINGSTART] " .. sender:driverName() .. " -> fase: " .. phase)
+    ac.log("[ROLLINGSTART] " .. sender:driverName() .. " -> fase: " .. phase .. (isDuplicate and " (duplicado, ignorado)" or ""))
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -191,7 +209,15 @@ local function startSequence()
     greenCheckDone = false
     greenForced = false
     resetLightEdges()
-    rollingStartEvent({ phase = 2, startTime = st, delayTime = dt })
+    local payload = { phase = 2, startTime = st, delayTime = dt }
+    rollingStartEvent(payload)
+    -- Reenvíos distribuidos en varios segundos, mismo mecanismo que startLights.lua
+    scheduleResend(payload, 0.2)
+    scheduleResend(payload, 0.5)
+    scheduleResend(payload, 1)
+    scheduleResend(payload, 2)
+    scheduleResend(payload, 4)
+    scheduleResend(payload, 7)
     ac.log("[ROLLINGSTART] Secuencia iniciada -> fase: sequence")
 end
 
@@ -275,6 +301,15 @@ local function playBeep()
 end
 
 function script.update(dt)
+    for i = #resendQueue, 1, -1 do
+        local item = resendQueue[i]
+        item.timer = item.timer - dt
+        if item.timer <= 0 then
+            rollingStartEvent(item.payload)
+            table.remove(resendQueue, i)
+        end
+    end
+
     -- Fade del conjunto (semáforo + panel)
     local fadeSpeed = 3.5
     if phase ~= "off" or editingPanelId == MY_PREVIEW_ID then
