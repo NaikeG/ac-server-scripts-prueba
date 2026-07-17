@@ -1,6 +1,32 @@
 local sim = ac.getSim()
 local car = ac.getCar(0)
 
+-- ===== Estado de Vuelta Previa (mismo evento "Formation Lap" que usa vueltaPrevia.lua) =====
+-- Durante la Vuelta Previa ya se está técnicamente en sesión de Carrera, y como cada piloto
+-- llega a su casillero de grilla en un momento distinto, pueden aparecer diferencias de
+-- vuelta parecidas a las del arranque -- pero esta vez duran más que el sostenido de 1.5s
+-- porque la Vuelta Previa entera puede tardar bastante. Por eso directamente no se chequea
+-- bandera azul de Carrera mientras esté activa, y unos segundos MÁS después de que se apaga
+-- -- si el admin la apaga apenas ve que todos están más o menos ubicados, los números de
+-- vuelta de cada auto pueden no haber terminado de asentarse todavía en ese instante.
+local formationLapActive = false
+local FORMATION_GRACE_SECONDS = 8
+local formationGraceTimer = 0
+formationEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Formation Lap"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    if formationLapActive and not message.enabled then
+        formationGraceTimer = FORMATION_GRACE_SECONDS
+    end
+    formationLapActive = message.enabled
+end,
+ac.SharedNamespace.ServerScript)
+
+local function isFormationSuppressed()
+    return formationLapActive or formationGraceTimer > 0
+end
+
 local screen = { w = sim.windowWidth, h = sim.windowHeight }
 ac.onResolutionChange(function()
     screen.w = ac.getSim().windowWidth
@@ -204,6 +230,15 @@ local function checkBlueFlagApprox(dt)
         return false, nil -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
     end
 
+    if isRaceSession and isFormationSuppressed() then
+        -- Durante la Vuelta Previa (y unos segundos después de que se apaga), aunque ya sea
+        -- técnicamente sesión de Carrera, cada uno llega a su casillero en un momento
+        -- distinto -- las diferencias de vuelta que aparecen ahí no son una vuelta de
+        -- diferencia real, así que no corresponde bandera azul mientras esto esté pasando.
+        raceLapDiffTimer = 0
+        return false, nil
+    end
+
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     local okMyPos, myPos = pcall(function() return car.position end)
     local okLook, look = pcall(function() return car.look end)
@@ -304,7 +339,8 @@ local function checkBlueFlagApprox(dt)
         else
             raceLapDiffTimer = 0
         end
-        return raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS, nil, nil
+        local raceActive = raceLapDiffTimer >= RACE_LAP_SUSTAIN_SECONDS
+        return raceActive, raceActive and foundDirection or nil, raceActive and foundCarIndex or nil
     end
 
     -- En Clasificación, la diferencia de velocidad tiene que sostenerse un rato antes de
@@ -751,6 +787,10 @@ local blueFlagTrackedCarIndex = nil -- para poder seguir en vivo al auto que dis
 function script.update(dt)
     if graceTimer > 0 then
         graceTimer = math.max(graceTimer - dt, 0)
+    end
+
+    if formationGraceTimer > 0 then
+        formationGraceTimer = math.max(formationGraceTimer - dt, 0)
     end
 
     if banner.timer > 0 then
