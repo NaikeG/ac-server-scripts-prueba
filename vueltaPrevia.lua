@@ -341,6 +341,8 @@ ac.onResolutionChange(function()
     screen.h = ac.getSim().windowHeight
 end)
 
+local BENGALAS_ENABLED = true
+
 ac.onOnlineWelcome(function(message, config)
     findPositionField()
     findLookField()
@@ -348,6 +350,7 @@ ac.onOnlineWelcome(function(message, config)
     ARRIVAL_DISTANCE = config:get("FORMATION", "ARRIVAL_DISTANCE_METERS", 2)
     SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
     TOTAL_GRID_SLOTS = config:get("FORMATION", "TOTAL_GRID_SLOTS", 30)
+    BENGALAS_ENABLED = config:get("FORMATION", "BENGALAS_ENABLED", 1) == 1
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -381,6 +384,7 @@ local raceWonStartTime = 0
 raceWonEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Race Won")
 }, function(sender, message)
+    if not BENGALAS_ENABLED then return end
     -- Como cada cliente lo dispara por su cuenta casi al mismo tiempo, no reinicia el
     -- efecto si ya está en curso -- solo arranca una vez.
     if raceWonTimer <= 0 then
