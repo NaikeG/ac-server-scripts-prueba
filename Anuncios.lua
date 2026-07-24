@@ -262,6 +262,7 @@ local function settleAndAnnouncePodium(myName)
 
             if i == 1 then
                 raceWon = true
+                raceWonEvent({})
             end
 
             local podium = PODIUM[i]
@@ -541,6 +542,14 @@ local PANEL_GLOBAL_ID = {
 
 local globalDragging = false
 local globalDragPanelId = 0
+
+-- Aviso simple (sin datos) de que la carrera se ganó, para que vueltaPrevia.lua dispare el
+-- efecto de bengalas en la línea de largada/llegada. No hace falta el nombre del ganador acá
+-- -- solo importa el disparo en sí.
+raceWonEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Race Won")
+}, function(sender, message) end,
+ac.SharedNamespace.ServerScript)
 
 panelDragStateEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Drag State"),
