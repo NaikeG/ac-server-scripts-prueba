@@ -124,28 +124,42 @@ end
 
 -- ===== Captura de la línea de meta REAL, independiente del respawn (que puede estar mal
 -- calibrado en algunos circuitos, apareciendo del otro lado de la pista) =====
--- La línea de meta siempre está en splinePosition = 0, sin importar dónde estén mal puestos
--- los casilleros de largada. Se detecta el PRIMER auto que cruza de vuelta (splinePosition
--- de cerca de 1 a cerca de 0) y se usa SU posición/orientación en ese instante como la
--- ubicación real -- eso sí es la meta de verdad, para las bengalas.
+-- Se detecta el PRIMER auto que completa una vuelta (car.lapCount incrementa -- el mismo
+-- campo que usamos en todo el resto del proyecto, confirmado muchas veces que es confiable)
+-- y se usa SU posición/orientación en ese instante como la ubicación real de la línea.
+-- (Se había probado primero con splinePosition esperando que vuelva a 0 en cada vuelta, pero
+-- no se detectó ningún cruce -- probablemente ese campo no resetea como se esperaba, así que
+-- se cambió a lapCount, que sabemos que sí funciona bien.)
 local trueFinishLinePos = nil
 local trueFinishForwardX, trueFinishForwardZ = nil, nil
-local lastSplinePosByCar = {}
+local lastLapCountByCar = {}
+local crossingDiagTimer = 0
 
-local function checkFinishLineCrossing()
+local function checkFinishLineCrossing(dt)
     if trueFinishLinePos ~= nil then return end -- ya se capturó, no hace falta de nuevo
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     if not okCount then return end
+
+    -- Diagnóstico throttled: muestra el lapCount real de cada auto conectado cada ~2
+    -- segundos, para confirmar que los datos llegan bien mientras se busca la vuelta.
+    crossingDiagTimer = crossingDiagTimer + (dt or 0)
+    local shouldLog = crossingDiagTimer >= 2
+    if shouldLog then crossingDiagTimer = 0 end
 
     for i = 0, carsCount - 1 do
         local okOther, otherCar = pcall(function() return ac.getCar(i) end)
         if okOther and otherCar then
             local okConn, connected = pcall(function() return otherCar.isConnected end)
             if okConn and connected then
-                local okSpline, spline = pcall(function() return otherCar.splinePosition end)
-                if okSpline then
-                    local last = lastSplinePosByCar[i]
-                    if last ~= nil and last > 0.9 and spline < 0.1 then
+                local okLap, lapCount = pcall(function() return otherCar.lapCount end)
+                if okLap then
+                    if shouldLog then
+                        local okName, name = pcall(function() return otherCar:driverName() end)
+                        ac.log("[FORMATION] CROSSING DIAG: auto " .. i .. " (" .. tostring(okName and name or "?") ..
+                            ") lapCount=" .. tostring(lapCount))
+                    end
+                    local last = lastLapCountByCar[i]
+                    if last ~= nil and lapCount > last then
                         local okPos, pos = pcall(function() return otherCar.position end)
                         if okPos then
                             trueFinishLinePos = { x = pos.x, y = pos.y, z = pos.z }
@@ -157,10 +171,12 @@ local function checkFinishLineCrossing()
                                     trueFinishForwardZ = look.z / len
                                 end
                             end
-                            ac.log("[FORMATION] Línea de meta REAL capturada (auto " .. i .. " cruzando la línea)")
+                            ac.log("[FORMATION] Línea de meta REAL capturada (auto " .. i .. " completó una vuelta)")
                         end
                     end
-                    lastSplinePosByCar[i] = spline
+                    lastLapCountByCar[i] = lapCount
+                elseif shouldLog then
+                    ac.log("[FORMATION] CROSSING DIAG: auto " .. i .. " -> no se pudo leer lapCount")
                 end
             end
         end
@@ -504,7 +520,7 @@ function script.draw3D()
 end
 
 function script.update(dt)
-    checkFinishLineCrossing()
+    checkFinishLineCrossing(dt)
 
     if raceWonTimer > 0 then
         raceWonTimer = math.max(raceWonTimer - dt, 0)
