@@ -90,20 +90,104 @@ local TOTAL_GRID_SLOTS = 30
 
 -- Devuelve la posición de un casillero de grilla, incluso si no hubo ningún auto ahí esa
 -- carrera -- se extrapola usando el espaciado real entre los dos últimos casilleros SÍ
--- capturados, continuando en la misma dirección hacia atrás.
+-- capturados, continuando en la misma dirección hacia atrás. Si solo hay 1 casillero real
+-- (por ejemplo, probando solo), usa un espaciado típico de grilla (8m) en la dirección
+-- "hacia atrás" (usando gridForwardX/Z) como respaldo, en vez de no poder extrapolar nada.
+local DEFAULT_GRID_SPACING = 8
 local function getExtrapolatedSlotPos(rank)
     if gridSlotWorldPos[rank] ~= nil then
         return gridSlotWorldPos[rank]
     end
     local capturedCount = #gridSlotWorldPos
-    if capturedCount < 2 then return nil end -- no hay forma de saber el espaciado con menos de 2 casilleros reales
+    if capturedCount == 0 then return nil end
 
-    local p1 = gridSlotWorldPos[capturedCount - 1]
-    local p2 = gridSlotWorldPos[capturedCount]
-    local stepX = p2.x - p1.x
-    local stepZ = p2.z - p1.z
+    local stepX, stepZ
+    local refPos
+    if capturedCount >= 2 then
+        local p1 = gridSlotWorldPos[capturedCount - 1]
+        local p2 = gridSlotWorldPos[capturedCount]
+        stepX = p2.x - p1.x
+        stepZ = p2.z - p1.z
+        refPos = p2
+    elseif gridForwardX ~= nil and gridForwardZ ~= nil then
+        -- Solo 1 casillero real: se asume un espaciado típico, hacia atrás (-forward)
+        stepX = -gridForwardX * DEFAULT_GRID_SPACING
+        stepZ = -gridForwardZ * DEFAULT_GRID_SPACING
+        refPos = gridSlotWorldPos[capturedCount]
+    else
+        return nil
+    end
+
     local stepsBeyond = rank - capturedCount
-    return { x = p2.x + stepX * stepsBeyond, y = p2.y, z = p2.z + stepZ * stepsBeyond }
+    return { x = refPos.x + stepX * stepsBeyond, y = refPos.y, z = refPos.z + stepZ * stepsBeyond }
+end
+
+-- ===== Captura de la línea de meta REAL, independiente del respawn (que puede estar mal
+-- calibrado en algunos circuitos, apareciendo del otro lado de la pista) =====
+-- La línea de meta siempre está en splinePosition = 0, sin importar dónde estén mal puestos
+-- los casilleros de largada. Se detecta el PRIMER auto que cruza de vuelta (splinePosition
+-- de cerca de 1 a cerca de 0) y se usa SU posición/orientación en ese instante como la
+-- ubicación real -- eso sí es la meta de verdad, para las bengalas.
+local trueFinishLinePos = nil
+local trueFinishForwardX, trueFinishForwardZ = nil, nil
+local lastSplinePosByCar = {}
+
+local function checkFinishLineCrossing()
+    if trueFinishLinePos ~= nil then return end -- ya se capturó, no hace falta de nuevo
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if not okCount then return end
+
+    for i = 0, carsCount - 1 do
+        local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+        if okOther and otherCar then
+            local okConn, connected = pcall(function() return otherCar.isConnected end)
+            if okConn and connected then
+                local okSpline, spline = pcall(function() return otherCar.splinePosition end)
+                if okSpline then
+                    local last = lastSplinePosByCar[i]
+                    if last ~= nil and last > 0.9 and spline < 0.1 then
+                        local okPos, pos = pcall(function() return otherCar.position end)
+                        if okPos then
+                            trueFinishLinePos = { x = pos.x, y = pos.y, z = pos.z }
+                            local okLook, look = pcall(function() return otherCar.look end)
+                            if okLook and look ~= nil then
+                                local len = math.sqrt(look.x * look.x + look.z * look.z)
+                                if len > 0.001 then
+                                    trueFinishForwardX = look.x / len
+                                    trueFinishForwardZ = look.z / len
+                                end
+                            end
+                            ac.log("[FORMATION] Línea de meta REAL capturada (auto " .. i .. " cruzando la línea)")
+                        end
+                    end
+                    lastSplinePosByCar[i] = spline
+                end
+            end
+        end
+    end
+end
+
+-- Posición del casillero "rank" para las BENGALAS específicamente: si ya se capturó la
+-- línea real, se ancla ahí (no al respawn) y se extrapola hacia atrás con el espaciado real
+-- entre casilleros de grilla (que sigue siendo válido como distancia relativa, aunque el
+-- conjunto entero esté mal ubicado). Si todavía no se capturó la línea real, no dibuja nada.
+local function getBengalaSlotPos(rank)
+    if trueFinishLinePos == nil or trueFinishForwardX == nil then return nil end
+
+    local spacing = DEFAULT_GRID_SPACING
+    if #gridSlotWorldPos >= 2 then
+        local p1 = gridSlotWorldPos[#gridSlotWorldPos - 1]
+        local p2 = gridSlotWorldPos[#gridSlotWorldPos]
+        spacing = math.sqrt((p2.x - p1.x) ^ 2 + (p2.z - p1.z) ^ 2)
+        if spacing < 1 then spacing = DEFAULT_GRID_SPACING end -- por las dudas, algo mal medido
+    end
+
+    local stepsBeyond = rank - 1
+    return {
+        x = trueFinishLinePos.x - trueFinishForwardX * spacing * stepsBeyond,
+        y = trueFinishLinePos.y,
+        z = trueFinishLinePos.z - trueFinishForwardZ * spacing * stepsBeyond
+    }
 end
 
 -- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
@@ -286,6 +370,9 @@ raceWonEvent = ac.OnlineEvent({
     if raceWonTimer <= 0 then
         raceWonTimer = RACE_WON_DURATION
         raceWonStartTime = sim.currentSessionTime
+        ac.log("[FORMATION] Bengalas activadas -- casilleros reales capturados: " ..
+            tostring(#gridSlotWorldPos) .. " / TOTAL_GRID_SLOTS=" .. tostring(TOTAL_GRID_SLOTS) ..
+            " | línea real capturada: " .. tostring(trueFinishLinePos ~= nil))
     end
 end,
 ac.SharedNamespace.ServerScript)
@@ -302,21 +389,22 @@ function script.draw3D()
     -- marcador de grilla (más abajo), porque para cuando termina la carrera, Vuelta Previa
     -- casi seguro ya está apagada -- si este bloque estuviera después de esos return, nunca
     -- llegaría a ejecutarse.
-    if raceWonTimer > 0 and gridForwardX ~= nil and gridForwardZ ~= nil then
-        local ffx, ffz = gridForwardX, gridForwardZ
+    if raceWonTimer > 0 and trueFinishForwardX ~= nil and trueFinishForwardZ ~= nil then
+        local ffx, ffz = trueFinishForwardX, trueFinishForwardZ
         local frx, frz = -ffz, ffx -- vector lateral, misma convención que el resto del script
 
         local elapsed = (sim.currentSessionTime - raceWonStartTime) / 1000
         local SIDE_OFFSET = 4 -- metros a cada lado del casillero
-        local segments = 4 -- menos segmentos que antes, para no saturar con tantas bengalas juntas
+        local segments = 5
+        local strands = 3 -- líneas paralelas por bengala, para simular volumen (grosor)
+        local strandGap = 0.12 -- separación entre esas líneas paralelas
 
         local okFlares, errFlares = pcall(function()
-            -- Un par de bengalas (una a cada lado) en CADA casillero del circuito (real o
-            -- extrapolado), así cubre TODO el largo real de la grilla, sin importar cuántos
-            -- autos estaban conectados esa carrera -- van prendiéndose de a poco desde el
-            -- fondo de la grilla hacia la línea, "acompañando" al líder.
+            -- Un par de bengalas (una a cada lado) en CADA casillero, anclado a la línea de
+            -- meta REAL (no al respawn, que puede estar mal calibrado) -- cubre todo el
+            -- largo de la grilla, prendiéndose de a poco desde el fondo hacia la línea.
             for rank = 1, TOTAL_GRID_SLOTS do
-                local slotPos = getExtrapolatedSlotPos(rank)
+                local slotPos = getBengalaSlotPos(rank)
                 if slotPos ~= nil then
                     for side = -1, 1, 2
                         local baseX = slotPos.x + frx * side * SIDE_OFFSET
@@ -328,16 +416,31 @@ function script.draw3D()
                         -- la ola de bengalas acompañara al líder cruzando toda la grilla.
                         local flareElapsed = elapsed - ((TOTAL_GRID_SLOTS - rank) * 0.08)
                         if flareElapsed > 0 then
-                            local height = math.min(flareElapsed * 2.5, 4)
-                            for s = 0, segments - 1 do
-                                local t0 = s / segments
-                                local t1 = (s + 1) / segments
-                                local wobble0 = math.sin(elapsed * 6 + s + rank) * 0.15
-                                local wobble1 = math.sin(elapsed * 6 + (s + 1) + rank) * 0.15
-                                local p0 = vec3(baseX + wobble0, baseY + height * t0, baseZ)
-                                local p1 = vec3(baseX + wobble1, baseY + height * t1, baseZ)
-                                local fade = math.max(1 - t0 * 0.6, 0.2)
-                                local color = rgbm(1, 0.15 + t0 * 0.3, 0.4 + t0 * 0.3, fade)
+                            local height = math.min(flareElapsed * 3.5, 7) -- bien alta y llamativa, como en el TC
+                            for strand = 1, strands do
+                                -- Cada línea paralela tiene su propio desfasaje lateral fijo
+                                -- y de fase en el vaivén, para que no se vean todas idénticas
+                                local strandOffset = (strand - (strands + 1) / 2) * strandGap
+                                local strandPhase = strand * 1.7
+                                for s = 0, segments - 1 do
+                                    local t0 = s / segments
+                                    local t1 = (s + 1) / segments
+                                    local wobble0 = math.sin(elapsed * 6 + s + rank + strandPhase) * 0.25
+                                    local wobble1 = math.sin(elapsed * 6 + (s + 1) + rank + strandPhase) * 0.25
+                                    local p0 = vec3(baseX + strandOffset + wobble0, baseY + height * t0, baseZ)
+                                    local p1 = vec3(baseX + strandOffset + wobble1, baseY + height * t1, baseZ)
+                                    local fade = math.max(1 - t0 * 0.55, 0.25)
+                                    -- Colores bien vivos: rojo intenso en la base, rosa/magenta
+                                    -- brillante hacia la punta, como las bengalas reales
+                                    local color = rgbm(1, 0.05 + t0 * 0.35, 0.25 + t0 * 0.55, fade)
+                                    render.debugLine(p0, p1, color)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
                                 render.debugLine(p0, p1, color)
                             end
                         end
@@ -401,6 +504,8 @@ function script.draw3D()
 end
 
 function script.update(dt)
+    checkFinishLineCrossing()
+
     if raceWonTimer > 0 then
         raceWonTimer = math.max(raceWonTimer - dt, 0)
     end
