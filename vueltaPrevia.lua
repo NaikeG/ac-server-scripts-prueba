@@ -422,7 +422,7 @@ function script.draw3D()
             for rank = 1, TOTAL_GRID_SLOTS do
                 local slotPos = getBengalaSlotPos(rank)
                 if slotPos ~= nil then
-                    for side = -1, 1, 2
+                    for side = -1, 1, 2 do
                         local baseX = slotPos.x + frx * side * SIDE_OFFSET
                         local baseZ = slotPos.z + frz * side * SIDE_OFFSET
                         local baseY = slotPos.y
