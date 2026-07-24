@@ -457,13 +457,6 @@ function script.draw3D()
                 end
             end
         end)
-                                render.debugLine(p0, p1, color)
-                            end
-                        end
-                    end
-                end
-            end
-        end)
         if not okFlares then
             ac.log("[FORMATION] Error dibujando bengalas: " .. tostring(errFlares))
         end
