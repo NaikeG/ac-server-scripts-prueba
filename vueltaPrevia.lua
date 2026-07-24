@@ -81,6 +81,31 @@ local gridSlotWorldPos = {}
 local myGridPosition = nil
 local gridForwardX, gridForwardZ = nil, nil -- vector de orientación de la grilla (crudo, sin pasar por ángulo)
 
+-- No hay un campo confirmado de "cantidad de casilleros de grilla que tiene el circuito"
+-- (sim.carsCount es el tamaño de la entry list del server, no lo mismo) -- así que es
+-- configurable, y hay que ponerlo según el circuito real. Se usa para las bengalas, que
+-- cubren TODOS los casilleros del circuito, no solo los autos que estaban conectados esa
+-- carrera en particular.
+local TOTAL_GRID_SLOTS = 30
+
+-- Devuelve la posición de un casillero de grilla, incluso si no hubo ningún auto ahí esa
+-- carrera -- se extrapola usando el espaciado real entre los dos últimos casilleros SÍ
+-- capturados, continuando en la misma dirección hacia atrás.
+local function getExtrapolatedSlotPos(rank)
+    if gridSlotWorldPos[rank] ~= nil then
+        return gridSlotWorldPos[rank]
+    end
+    local capturedCount = #gridSlotWorldPos
+    if capturedCount < 2 then return nil end -- no hay forma de saber el espaciado con menos de 2 casilleros reales
+
+    local p1 = gridSlotWorldPos[capturedCount - 1]
+    local p2 = gridSlotWorldPos[capturedCount]
+    local stepX = p2.x - p1.x
+    local stepZ = p2.z - p1.z
+    local stepsBeyond = rank - capturedCount
+    return { x = p2.x + stepX * stepsBeyond, y = p2.y, z = p2.z + stepZ * stepsBeyond }
+end
+
 -- Distintas versiones de Lua llaman diferente a la función de arcotangente de 2 argumentos
 -- (math.atan2 en Lua 5.1/5.2, math.atan(y,x) en 5.3+) -- probamos las dos, por las dudas.
 local function safeAtan2(y, x)
@@ -222,6 +247,7 @@ ac.onOnlineWelcome(function(message, config)
     ARROW_ACTIVATION_DISTANCE = config:get("FORMATION", "ARROW_ACTIVATION_DISTANCE_METERS", 100)
     ARRIVAL_DISTANCE = config:get("FORMATION", "ARRIVAL_DISTANCE_METERS", 2)
     SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
+    TOTAL_GRID_SLOTS = config:get("FORMATION", "TOTAL_GRID_SLOTS", 30)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -245,6 +271,25 @@ ac.onOnlineWelcome(function(message, config)
     )
 end)
 
+-- ===== Efecto de "bengalas" (estilo Turismo Carretera) cuando el líder cruza la línea =====
+-- render.debugLine no da partículas de verdad, así que se simula con varias líneas
+-- ascendiendo con un poco de vaivén, en colores rojo/rosa, cerca de la línea de largada.
+local RACE_WON_DURATION = 7
+local raceWonTimer = 0
+local raceWonStartTime = 0
+
+raceWonEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Race Won")
+}, function(sender, message)
+    -- Como cada cliente lo dispara por su cuenta casi al mismo tiempo, no reinicia el
+    -- efecto si ya está en curso -- solo arranca una vez.
+    if raceWonTimer <= 0 then
+        raceWonTimer = RACE_WON_DURATION
+        raceWonStartTime = sim.currentSessionTime
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
 -- ===== Marcador 3D en el piso, en el casillero de grilla (como el resaltado de boxes) =====
 -- Se arma con líneas (render.debugLine, ya confirmado), no render.debugBox -- así lo podemos
 -- rotar nosotros mismos con vectores directos (forward/right), en vez de un ángulo -- más
@@ -253,6 +298,58 @@ local BOX_WIDTH = 2.4  -- ancho del auto
 local BOX_LENGTH = 4.6 -- largo del auto
 
 function script.draw3D()
+    -- Bengalas al ganar la carrera: van ACÁ ARRIBA, antes que cualquier "return" temprano del
+    -- marcador de grilla (más abajo), porque para cuando termina la carrera, Vuelta Previa
+    -- casi seguro ya está apagada -- si este bloque estuviera después de esos return, nunca
+    -- llegaría a ejecutarse.
+    if raceWonTimer > 0 and gridForwardX ~= nil and gridForwardZ ~= nil then
+        local ffx, ffz = gridForwardX, gridForwardZ
+        local frx, frz = -ffz, ffx -- vector lateral, misma convención que el resto del script
+
+        local elapsed = (sim.currentSessionTime - raceWonStartTime) / 1000
+        local SIDE_OFFSET = 4 -- metros a cada lado del casillero
+        local segments = 4 -- menos segmentos que antes, para no saturar con tantas bengalas juntas
+
+        local okFlares, errFlares = pcall(function()
+            -- Un par de bengalas (una a cada lado) en CADA casillero del circuito (real o
+            -- extrapolado), así cubre TODO el largo real de la grilla, sin importar cuántos
+            -- autos estaban conectados esa carrera -- van prendiéndose de a poco desde el
+            -- fondo de la grilla hacia la línea, "acompañando" al líder.
+            for rank = 1, TOTAL_GRID_SLOTS do
+                local slotPos = getExtrapolatedSlotPos(rank)
+                if slotPos ~= nil then
+                    for side = -1, 1, 2
+                        local baseX = slotPos.x + frx * side * SIDE_OFFSET
+                        local baseZ = slotPos.z + frz * side * SIDE_OFFSET
+                        local baseY = slotPos.y
+
+                        -- Los casilleros más atrás en la grilla (rank más alto) se encienden
+                        -- antes, y la Pole (rank 1, la línea) se enciende al final -- como si
+                        -- la ola de bengalas acompañara al líder cruzando toda la grilla.
+                        local flareElapsed = elapsed - ((TOTAL_GRID_SLOTS - rank) * 0.08)
+                        if flareElapsed > 0 then
+                            local height = math.min(flareElapsed * 2.5, 4)
+                            for s = 0, segments - 1 do
+                                local t0 = s / segments
+                                local t1 = (s + 1) / segments
+                                local wobble0 = math.sin(elapsed * 6 + s + rank) * 0.15
+                                local wobble1 = math.sin(elapsed * 6 + (s + 1) + rank) * 0.15
+                                local p0 = vec3(baseX + wobble0, baseY + height * t0, baseZ)
+                                local p1 = vec3(baseX + wobble1, baseY + height * t1, baseZ)
+                                local fade = math.max(1 - t0 * 0.6, 0.2)
+                                local color = rgbm(1, 0.15 + t0 * 0.3, 0.4 + t0 * 0.3, fade)
+                                render.debugLine(p0, p1, color)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        if not okFlares then
+            ac.log("[FORMATION] Error dibujando bengalas: " .. tostring(errFlares))
+        end
+    end
+
     if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil then return end
     if gridForwardX == nil or gridForwardZ == nil then return end
     if not (state.enabled and navActive) then return end -- solo mientras el cartel de navegación está activo
@@ -304,6 +401,10 @@ function script.draw3D()
 end
 
 function script.update(dt)
+    if raceWonTimer > 0 then
+        raceWonTimer = math.max(raceWonTimer - dt, 0)
+    end
+
     -- Vigila la transición a sesión de Carrera en TODOS los frames (no en un solo evento
     -- puntual), porque sim.raceSessionType puede leerse con un valor viejo justo en el
     -- instante exacto de la transición -- de esta forma se autocorrige apenas se actualiza.
