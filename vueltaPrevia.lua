@@ -164,6 +164,16 @@ local function checkFinishLineCrossing(dt)
                         if okPos then
                             trueFinishLinePos = { x = pos.x, y = pos.y, z = pos.z }
                             local okLook, look = pcall(function() return otherCar.look end)
+                            local usedFallback = false
+                            if not (okLook and look ~= nil) then
+                                -- Respaldo: si no se puede leer la orientación del auto que
+                                -- cruzó (puede que .look no esté disponible para autos que no
+                                -- son el mío), se usa MI PROPIA orientación como aproximación
+                                -- -- cualquier auto yendo en el sentido normal de la pista
+                                -- debería mirar más o menos para el mismo lado en ese punto.
+                                okLook, look = pcall(function() return car.look end)
+                                usedFallback = true
+                            end
                             if okLook and look ~= nil then
                                 local len = math.sqrt(look.x * look.x + look.z * look.z)
                                 if len > 0.001 then
@@ -171,7 +181,9 @@ local function checkFinishLineCrossing(dt)
                                     trueFinishForwardZ = look.z / len
                                 end
                             end
-                            ac.log("[FORMATION] Línea de meta REAL capturada (auto " .. i .. " completó una vuelta)")
+                            ac.log("[FORMATION] Línea de meta REAL capturada (auto " .. i .. " completó una vuelta) | " ..
+                                "orientación: " .. tostring(trueFinishForwardX ~= nil) ..
+                                (usedFallback and " (con respaldo, mi propia orientación)" or " (del auto que cruzó)"))
                         end
                     end
                     lastLapCountByCar[i] = lapCount
@@ -392,7 +404,8 @@ raceWonEvent = ac.OnlineEvent({
         raceWonStartTime = sim.currentSessionTime
         ac.log("[FORMATION] Bengalas activadas -- casilleros reales capturados: " ..
             tostring(#gridSlotWorldPos) .. " / TOTAL_GRID_SLOTS=" .. tostring(TOTAL_GRID_SLOTS) ..
-            " | línea real capturada: " .. tostring(trueFinishLinePos ~= nil))
+            " | línea real capturada: " .. tostring(trueFinishLinePos ~= nil) ..
+            " | orientación capturada: " .. tostring(trueFinishForwardX ~= nil))
     end
 end,
 ac.SharedNamespace.ServerScript)
