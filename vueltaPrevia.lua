@@ -386,27 +386,47 @@ ac.onOnlineWelcome(function(message, config)
     )
 end)
 
--- ===== Efecto de "bengalas" (estilo Turismo Carretera) cuando el líder cruza la línea =====
--- render.debugLine no da partículas de verdad, así que se simula con varias líneas
--- ascendiendo con un poco de vaivén, en colores rojo/rosa, cerca de la línea de largada.
-local RACE_WON_DURATION = 7
-local raceWonTimer = 0
-local raceWonStartTime = 0
+-- ===== Fuegos artificiales que siguen al ganador durante 1 minuto =====
+-- Mucho más simple que el sistema de bengalas por toda la grilla: en vez de necesitar la
+-- posición de cada casillero, solo hace falta encontrar el auto del ganador (por nombre,
+-- ya que el evento ahora lo manda SOLO el propio ganador) y seguir su posición en vivo.
+local WINNER_EFFECT_DURATION = 60 -- 1 minuto
+local BURST_INTERVAL = 1.5        -- segundos entre cada estallido
+local BURST_LIFETIME = 1.2        -- cuánto dura cada estallido en pantalla
+
+local winnerEffectTimer = 0
+local winnerCarIndex = nil
+local nextBurstTimer = 0
+local activeBursts = {} -- lista de { startTime, x, y, z }
 
 raceWonEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Race Won")
 }, function(sender, message)
     if not BENGALAS_ENABLED then return end
-    -- Como cada cliente lo dispara por su cuenta casi al mismo tiempo, no reinicia el
-    -- efecto si ya está en curso -- solo arranca una vez.
-    if raceWonTimer <= 0 then
-        raceWonTimer = RACE_WON_DURATION
-        raceWonStartTime = sim.currentSessionTime
-        ac.log("[FORMATION] Bengalas activadas -- casilleros reales capturados: " ..
-            tostring(#gridSlotWorldPos) .. " / TOTAL_GRID_SLOTS=" .. tostring(TOTAL_GRID_SLOTS) ..
-            " | línea real capturada: " .. tostring(trueFinishLinePos ~= nil) ..
-            " | orientación capturada: " .. tostring(trueFinishForwardX ~= nil))
+    if winnerEffectTimer > 0 then return end -- ya está en curso, no reiniciar
+
+    -- Busca el índice del auto del ganador comparando nombres (el evento ahora lo manda
+    -- específicamente el propio ganador, así que sender:driverName() es confiable acá)
+    local okCount, carsCount = pcall(function() return sim.carsCount end)
+    if okCount then
+        local winnerName = sender:driverName()
+        for i = 0, carsCount - 1 do
+            local okOther, otherCar = pcall(function() return ac.getCar(i) end)
+            if okOther and otherCar then
+                local okName, name = pcall(function() return otherCar:driverName() end)
+                if okName and name == winnerName then
+                    winnerCarIndex = i
+                    break
+                end
+            end
+        end
     end
+
+    winnerEffectTimer = WINNER_EFFECT_DURATION
+    nextBurstTimer = 0
+    activeBursts = {}
+    ac.log("[FORMATION] Fuegos artificiales activados, siguiendo a " .. tostring(sender:driverName()) ..
+        " (auto índice " .. tostring(winnerCarIndex) .. ")")
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -418,64 +438,47 @@ local BOX_WIDTH = 2.4  -- ancho del auto
 local BOX_LENGTH = 4.6 -- largo del auto
 
 function script.draw3D()
-    -- Bengalas al ganar la carrera: van ACÁ ARRIBA, antes que cualquier "return" temprano del
-    -- marcador de grilla (más abajo), porque para cuando termina la carrera, Vuelta Previa
-    -- casi seguro ya está apagada -- si este bloque estuviera después de esos return, nunca
-    -- llegaría a ejecutarse.
-    if raceWonTimer > 0 and trueFinishForwardX ~= nil and trueFinishForwardZ ~= nil then
-        local ffx, ffz = trueFinishForwardX, trueFinishForwardZ
-        local frx, frz = -ffz, ffx -- vector lateral, misma convención que el resto del script
+    -- Fuegos artificiales al ganar la carrera: van ACÁ ARRIBA, antes que cualquier "return"
+    -- temprano del marcador de grilla (más abajo), porque para cuando termina la carrera,
+    -- Vuelta Previa casi seguro ya está apagada -- si este bloque estuviera después de esos
+    -- return, nunca llegaría a ejecutarse.
+    if winnerEffectTimer > 0 and #activeBursts > 0 then
+        local okBursts, errBursts = pcall(function()
+            for _, burst in ipairs(activeBursts) do
+                local age = (sim.currentSessionTime - burst.startTime) / 1000
+                local t = age / BURST_LIFETIME
+                if t >= 0 and t <= 1 then
+                    local expandRadius = t * 6 -- el estallido se abre hasta 6m de radio
+                    local fade = 1 - t
+                    for p = 1, 16 do
+                        -- Direcciones fijas según el índice de cada chispa (no al azar cada
+                        -- cuadro), para que cada una mantenga su propia trayectoria durante
+                        -- todo el estallido en vez de saltar de un lado a otro.
+                        local angleH = (p / 16) * math.pi * 2
+                        local angleV = ((p % 4) / 4 - 0.5) * math.pi * 0.6
+                        local dx = math.cos(angleH) * math.cos(angleV)
+                        local dy = math.sin(angleV) - t * 1.5 -- cae un poco con el tiempo, como la gravedad
+                        local dz = math.sin(angleH) * math.cos(angleV)
+                        local px = burst.x + dx * expandRadius
+                        local py = burst.y + dy * expandRadius
+                        local pz = burst.z + dz * expandRadius
 
-        local elapsed = (sim.currentSessionTime - raceWonStartTime) / 1000
-        local SIDE_OFFSET = 4 -- metros a cada lado del casillero
-        local segments = 5
-        local strands = 3 -- líneas paralelas por bengala, para simular volumen (grosor)
-        local strandGap = 0.12 -- separación entre esas líneas paralelas
-
-        local okFlares, errFlares = pcall(function()
-            -- Un par de bengalas (una a cada lado) en CADA casillero, anclado a la línea de
-            -- meta REAL (no al respawn, que puede estar mal calibrado) -- cubre todo el
-            -- largo de la grilla, prendiéndose de a poco desde el fondo hacia la línea.
-            for rank = 1, TOTAL_GRID_SLOTS do
-                local slotPos = getBengalaSlotPos(rank)
-                if slotPos ~= nil then
-                    for side = -1, 1, 2 do
-                        local baseX = slotPos.x + frx * side * SIDE_OFFSET
-                        local baseZ = slotPos.z + frz * side * SIDE_OFFSET
-                        local baseY = slotPos.y
-
-                        -- Los casilleros más atrás en la grilla (rank más alto) se encienden
-                        -- antes, y la Pole (rank 1, la línea) se enciende al final -- como si
-                        -- la ola de bengalas acompañara al líder cruzando toda la grilla.
-                        local flareElapsed = elapsed - ((TOTAL_GRID_SLOTS - rank) * 0.08)
-                        if flareElapsed > 0 then
-                            local height = math.min(flareElapsed * 3.5, 7) -- bien alta y llamativa, como en el TC
-                            for strand = 1, strands do
-                                -- Cada línea paralela tiene su propio desfasaje lateral fijo
-                                -- y de fase en el vaivén, para que no se vean todas idénticas
-                                local strandOffset = (strand - (strands + 1) / 2) * strandGap
-                                local strandPhase = strand * 1.7
-                                for s = 0, segments - 1 do
-                                    local t0 = s / segments
-                                    local t1 = (s + 1) / segments
-                                    local wobble0 = math.sin(elapsed * 6 + s + rank + strandPhase) * 0.25
-                                    local wobble1 = math.sin(elapsed * 6 + (s + 1) + rank + strandPhase) * 0.25
-                                    local p0 = vec3(baseX + strandOffset + wobble0, baseY + height * t0, baseZ)
-                                    local p1 = vec3(baseX + strandOffset + wobble1, baseY + height * t1, baseZ)
-                                    local fade = math.max(1 - t0 * 0.55, 0.25)
-                                    -- Colores bien vivos: rojo intenso en la base, rosa/magenta
-                                    -- brillante hacia la punta, como las bengalas reales
-                                    local color = rgbm(1, 0.05 + t0 * 0.35, 0.25 + t0 * 0.55, fade)
-                                    render.debugLine(p0, p1, color)
-                                end
-                            end
+                        local colorPick = p % 3
+                        local color
+                        if colorPick == 0 then
+                            color = rgbm(1, 0.2, 0.1, fade)
+                        elseif colorPick == 1 then
+                            color = rgbm(1, 0.8, 0.2, fade)
+                        else
+                            color = rgbm(1, 1, 1, fade)
                         end
+                        render.debugLine(vec3(burst.x, burst.y, burst.z), vec3(px, py, pz), color)
                     end
                 end
             end
         end)
-        if not okFlares then
-            ac.log("[FORMATION] Error dibujando bengalas: " .. tostring(errFlares))
+        if not okBursts then
+            ac.log("[FORMATION] Error dibujando fuegos artificiales: " .. tostring(errBursts))
         end
     end
 
@@ -532,8 +535,31 @@ end
 function script.update(dt)
     checkFinishLineCrossing(dt)
 
-    if raceWonTimer > 0 then
-        raceWonTimer = math.max(raceWonTimer - dt, 0)
+    if winnerEffectTimer > 0 then
+        winnerEffectTimer = math.max(winnerEffectTimer - dt, 0)
+        nextBurstTimer = nextBurstTimer - dt
+
+        if nextBurstTimer <= 0 and winnerCarIndex ~= nil then
+            nextBurstTimer = BURST_INTERVAL
+            local okWinner, winnerCar = pcall(function() return ac.getCar(winnerCarIndex) end)
+            if okWinner and winnerCar then
+                local okPos, pos = pcall(function() return winnerCar.position end)
+                if okPos then
+                    table.insert(activeBursts, {
+                        startTime = sim.currentSessionTime,
+                        x = pos.x, y = pos.y + 2, z = pos.z -- un poco arriba del techo del auto
+                    })
+                end
+            end
+        end
+
+        -- Limpia los estallidos ya terminados, para no acumular la lista sin límite
+        for i = #activeBursts, 1, -1 do
+            local age = (sim.currentSessionTime - activeBursts[i].startTime) / 1000
+            if age > BURST_LIFETIME then
+                table.remove(activeBursts, i)
+            end
+        end
     end
 
     -- Vigila la transición a sesión de Carrera en TODOS los frames (no en un solo evento
