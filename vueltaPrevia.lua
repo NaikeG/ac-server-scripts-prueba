@@ -444,7 +444,74 @@ ac.SharedNamespace.ServerScript)
 local BOX_WIDTH = 2.4  -- ancho del auto
 local BOX_LENGTH = 4.6 -- largo del auto
 
+-- Corona simple (3 picos), dibujada en el plano horizontal usando el vector "derecha" del
+-- auto como ancho -- se ve razonablemente bien desde cámaras traseras/de repetición, aunque
+-- no hay forma de que "mire siempre a cámara" como un cartel 2D.
+local function drawCrown3D(centerX, baseY, centerZ, rightX, rightZ, size, color)
+    local halfW = size * 0.5
+    local peakH = size * 0.6
+    local baseDip = size * 0.15
+
+    local function pt(rightOffset, heightOffset)
+        return vec3(centerX + rightX * rightOffset, baseY + heightOffset, centerZ + rightZ * rightOffset)
+    end
+
+    local pLeft = pt(-halfW, 0)
+    local pLeftPeak = pt(-halfW * 0.5, peakH)
+    local pLeftDip = pt(-halfW * 0.25, baseDip)
+    local pCenterPeak = pt(0, peakH * 1.3)
+    local pRightDip = pt(halfW * 0.25, baseDip)
+    local pRightPeak = pt(halfW * 0.5, peakH)
+    local pRight = pt(halfW, 0)
+
+    render.debugLine(pLeft, pLeftPeak, color)
+    render.debugLine(pLeftPeak, pLeftDip, color)
+    render.debugLine(pLeftDip, pCenterPeak, color)
+    render.debugLine(pCenterPeak, pRightDip, color)
+    render.debugLine(pRightDip, pRightPeak, color)
+    render.debugLine(pRightPeak, pRight, color)
+    render.debugLine(pLeft, pRight, color) -- base
+end
+
 function script.draw3D()
+    -- "1" dorado + corona, flotando arriba del auto ganador durante todo el minuto del
+    -- efecto -- independiente de los estallidos (se ve todo el tiempo, no solo cuando hay
+    -- fuegos artificiales en curso).
+    if winnerEffectTimer > 0 and winnerCarIndex ~= nil then
+        local okWinner, winnerCar = pcall(function() return ac.getCar(winnerCarIndex) end)
+        if okWinner and winnerCar then
+            local okPos, pos = pcall(function() return winnerCar.position end)
+            if okPos then
+                local okLook, look = pcall(function() return winnerCar.look end)
+                local fx, fz
+                if okLook and look ~= nil then
+                    local len = math.sqrt(look.x * look.x + look.z * look.z)
+                    if len > 0.001 then fx, fz = look.x / len, look.z / len end
+                end
+                if fx == nil then fx, fz = trueFinishForwardX or 0, trueFinishForwardZ or 1 end
+                local rx, rz = -fz, fx
+
+                local gold = rgbm(1.6, 1.25, 0.1, 1) -- dorado, con algo de glow
+                local crownY = pos.y + 2.6
+                local numberY = pos.y + 3.3
+
+                local okCrown, errCrown = pcall(function()
+                    drawCrown3D(pos.x, crownY, pos.z, rx, rz, 1.2, gold)
+                end)
+                if not okCrown then
+                    ac.log("[FORMATION] Error dibujando la corona: " .. tostring(errCrown))
+                end
+
+                local okText, errText = pcall(function()
+                    render.debugText(vec3(pos.x, numberY, pos.z), "1", gold, 3)
+                end)
+                if not okText then
+                    ac.log("[FORMATION] Error dibujando el '1': " .. tostring(errText))
+                end
+            end
+        end
+    end
+
     -- Fuegos artificiales al ganar la carrera: van ACÁ ARRIBA, antes que cualquier "return"
     -- temprano del marcador de grilla (más abajo), porque para cuando termina la carrera,
     -- Vuelta Previa casi seguro ya está apagada -- si este bloque estuviera después de esos
@@ -574,10 +641,36 @@ function script.update(dt)
             if okWinner and winnerCar then
                 local okPos, pos = pcall(function() return winnerCar.position end)
                 if okPos then
-                    table.insert(activeBursts, {
-                        startTime = sim.currentSessionTime,
-                        x = pos.x, y = pos.y, z = pos.z -- nivel del piso; la altura del estallido se calcula en el dibujo
-                    })
+                    local okLook, look = pcall(function() return winnerCar.look end)
+                    local fx, fz
+                    if okLook and look ~= nil then
+                        local len = math.sqrt(look.x * look.x + look.z * look.z)
+                        if len > 0.001 then fx, fz = look.x / len, look.z / len end
+                    end
+                    if fx == nil then
+                        -- Respaldo: si no se puede leer la orientación del auto ganador
+                        -- (puede pasar si no soy yo mismo quien ganó), se usa la orientación
+                        -- de la línea de meta como aproximación.
+                        fx, fz = trueFinishForwardX or 0, trueFinishForwardZ or 1
+                    end
+                    local rx, rz = -fz, fx
+
+                    -- Anillo de estallidos alrededor del auto, evitando la zona de ADELANTE
+                    -- (donde estaría mirando el conductor) para no taparle la vista -- cubre
+                    -- solo la mitad de atrás/costados (90° a 270°, no 0° que es el frente).
+                    local ringRadius = 5
+                    local angles = { 90, 140, 180, 220, 270 }
+                    for _, angDeg in ipairs(angles) do
+                        local angRad = math.rad(angDeg)
+                        local localFwd = math.cos(angRad)
+                        local localRight = math.sin(angRad)
+                        local bx = pos.x + (rx * localRight + fx * localFwd) * ringRadius
+                        local bz = pos.z + (rz * localRight + fz * localFwd) * ringRadius
+                        table.insert(activeBursts, {
+                            startTime = sim.currentSessionTime,
+                            x = bx, y = pos.y, z = bz -- nivel del piso; la altura del estallido se calcula en el dibujo
+                        })
+                    end
                 end
             end
         end
