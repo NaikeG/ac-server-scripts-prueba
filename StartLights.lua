@@ -98,30 +98,32 @@ end
 
 -- Aviso de vueltaPrevia.lua: al desactivar Vuelta Previa, arranca la secuencia sola, sin
 -- depender de que el admin apriete el botón de acá aparte.
-autoStartLightsEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Auto Start Lights")
+-- El evento nuevo "Auto Start Lights" no estaba llegando (nunca se veía ni el primer log al
+-- recibirlo, algo raro que no llegamos a identificar), así que en vez de insistir con un
+-- canal nuevo, se reutiliza "Formation Lap" -- el mismo que usa vueltaPrevia.lua para avisar
+-- del estado de Vuelta Previa, y que ya confirmamos que funciona bien (lo usa penalties.lua
+-- para suprimir la bandera azul).
+local wasFormationActive = false
+formationEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Formation Lap"),
+    enabled = ac.StructItem.boolean()
 }, function(sender, message)
-    -- Diagnóstico protegido: si algo en el chequeo de "soy yo mismo" tira un error, antes
-    -- fallaba en silencio (sin loguear nada) -- ahora, pase lo que pase, se ve algo en el log.
-    local okSenderName, senderName = pcall(function() return sender:driverName() end)
-    local okMyName, myName = pcall(function() return car:driverName() end)
-    ac.log("[STARTLIGHTS] Auto Start Lights recibido -- sender=" .. tostring(okSenderName and senderName or ("ERROR: " .. tostring(senderName))) ..
-        " | yo=" .. tostring(okMyName and myName or ("ERROR: " .. tostring(myName))))
-
-    if not (okSenderName and okMyName) then
-        ac.log("[STARTLIGHTS] No se pudo comparar nombres, se aborta por seguridad")
-        return
+    if wasFormationActive and not message.enabled then
+        -- Se acaba de desactivar Vuelta Previa -- mismo filtro de "soy yo mismo" que antes,
+        -- para que no dispare la secuencia en TODOS los clientes a la vez.
+        local okSenderName, senderName = pcall(function() return sender:driverName() end)
+        local okMyName, myName = pcall(function() return car:driverName() end)
+        ac.log("[STARTLIGHTS] Formation Lap desactivada -- sender=" .. tostring(okSenderName and senderName or "ERROR") ..
+            " | yo=" .. tostring(okMyName and myName or "ERROR"))
+        if okSenderName and okMyName and senderName == myName then
+            ac.log("[STARTLIGHTS] Disparo automático (Vuelta Previa desactivada)")
+            local okTrigger, errTrigger = pcall(doTriggerStart)
+            if not okTrigger then
+                ac.log("[STARTLIGHTS] ERROR al disparar automáticamente: " .. tostring(errTrigger))
+            end
+        end
     end
-    if senderName ~= myName then
-        ac.log("[STARTLIGHTS] No soy yo quien mandó el aviso, se ignora")
-        return
-    end
-
-    ac.log("[STARTLIGHTS] Disparo automático recibido (Vuelta Previa desactivada)")
-    local okTrigger, errTrigger = pcall(doTriggerStart)
-    if not okTrigger then
-        ac.log("[STARTLIGHTS] ERROR al disparar automáticamente: " .. tostring(errTrigger))
-    end
+    wasFormationActive = message.enabled
 end,
 ac.SharedNamespace.ServerScript)
 
