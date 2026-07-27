@@ -20,8 +20,9 @@ local PANEL_NAMES = {
     [8] = "Semáforos de Largada",
     [9] = "Largada en Movimiento",
     [10] = "Navegación a tu Puesto de Grilla",
+    [11] = "Aviso Bandera Azul",
 }
-local PANEL_COUNT = 10
+local PANEL_COUNT = 11
 
 local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
@@ -262,7 +263,6 @@ local function settleAndAnnouncePodium(myName)
 
             if i == 1 then
                 raceWon = true
-                raceWonEvent({})
             end
 
             local podium = PODIUM[i]
@@ -274,6 +274,10 @@ local function settleAndAnnouncePodium(myName)
                 if podium then
                     if i == 1 then
                         table.insert(pendingChats, "🏆 " .. r.name .. " HA GANADO LA CARRERA!")
+                        -- Se dispara SOLO desde el cliente del propio ganador (no desde todos
+                        -- los clientes como antes), para que quien lo reciba pueda identificar
+                        -- de quién se trata por el remitente del evento.
+                        raceWonEvent({})
                     else
                         table.insert(pendingChats, podium.icon .. " " .. r.name .. " terminó en P" .. i .. "!")
                     end
