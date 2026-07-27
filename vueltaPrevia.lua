@@ -348,6 +348,13 @@ formationEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
+-- Aviso simple (sin datos) para que startLights.lua arranque su secuencia automáticamente
+-- al desactivar Vuelta Previa, sin depender de un botón aparte.
+autoStartLightsEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Auto Start Lights")
+}, function(sender, message) end,
+ac.SharedNamespace.ServerScript)
+
 ac.onResolutionChange(function()
     screen.w = ac.getSim().windowWidth
     screen.h = ac.getSim().windowHeight
@@ -383,6 +390,12 @@ ac.onOnlineWelcome(function(message, config)
                 enabled = state.enabled
             })
             ac.log("[FORMATION] Estado: " .. tostring(state.enabled))
+            if not state.enabled then
+                -- Al desactivar Vuelta Previa, se arranca automáticamente la secuencia de
+                -- Start Lights, para no depender de que el admin apriete un botón aparte.
+                autoStartLightsEvent({})
+                ac.log("[FORMATION] Vuelta Previa desactivada -- disparando Start Lights automáticamente")
+            end
         end,
         adminFlag
     )
@@ -615,6 +628,18 @@ local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
 end
 
+-- Cuadrado intermitente amarillo (mismo estilo que la franja del ícono SC), para poner uno
+-- a cada lado del cartel de texto en vez del semáforo completo, que ocupaba mucho lugar.
+local function drawBlinkSquare(x, y, size)
+    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+    if blinkOn then
+        ui.drawRectFilled(vec2(x, y), vec2(x + size, y + size), alphaColor(1.0, 0.82, 0.0, 1))
+    else
+        ui.drawRectFilled(vec2(x, y), vec2(x + size, y + size), alphaColor(0.25, 0.2, 0.0, 1))
+    end
+    ui.drawRect(vec2(x, y), vec2(x + size, y + size), alphaColor(0.16, 0.16, 0.16, 1), 0, 0, 2)
+end
+
 local function drawInfoPanel(centerX, y)
     ui.pushFont(biggestFont)
     local titleSize = ui.measureText(title)
@@ -640,39 +665,13 @@ local function drawInfoPanel(centerX, y)
     ui.popStyleColor()
     ui.popFont()
 
+    -- Un cuadrado intermitente a cada lado del cartel, en vez del semáforo completo
+    local squareSize = panelHeight
+    local gap = 12
+    drawBlinkSquare(x - gap - squareSize, y, squareSize)
+    drawBlinkSquare(x + panelWidth + gap, y, squareSize)
+
     return panelWidth, panelHeight
-end
-
-local function drawGantry(centerX, y)
-    local radius = 26
-    local spacing = radius * 2.4
-    local panelWidth = (lightCount - 1) * spacing + radius * 2 + 44
-    local panelHeight = radius * 2 + 44
-    local x = centerX - panelWidth * 0.5
-
-    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0.03, 0.03, 0.03, 0.92), 14)
-    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + panelHeight), alphaColor(0.16, 0.16, 0.16, 1), 14, 0, 2)
-
-    local lightsY = y + panelHeight * 0.5
-    local lightsStartX = x + 22 + radius
-
-    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
-
-    for i = 1, lightCount, 1 do
-        local center = vec2(lightsStartX + (i - 1) * spacing, lightsY)
-
-        ui.drawCircleFilled(center, radius + 6, alphaColor(0.10, 0.10, 0.10, 1), 32)
-        ui.drawCircle(center, radius + 6, alphaColor(0.22, 0.22, 0.22, 1), 32, 1.5)
-
-        if blinkOn then
-            ui.drawCircleFilled(center, radius * 2.1, rgbm(neonYellow.r, neonYellow.g, neonYellow.b, state.alpha * 0.12), 32)
-            ui.drawCircleFilled(center, radius * 1.5, rgbm(neonYellow.r, neonYellow.g, neonYellow.b, state.alpha * 0.28), 32)
-            ui.drawCircleFilled(center, radius, rgbm(neonYellow.r, neonYellow.g, neonYellow.b, state.alpha), 32)
-            ui.drawCircle(center, radius, alphaColor(1, 1, 1, 0.35), 32, 1)
-        else
-            ui.drawCircleFilled(center, radius, alphaColor(0.16, 0.02, 0.02, 1), 32)
-        end
-    end
 end
 
 
@@ -791,7 +790,6 @@ function script.drawUI()
 
     local centerX = panelPositions.comboPosX * screen.w
     local panelY = panelPositions.comboPosY * screen.h
-    local gantryY = panelY + panelHeight + 20
 
     local blockX = centerX - blockWidth * 0.5
     local blockY = panelY
@@ -813,7 +811,6 @@ function script.drawUI()
                 blockY = mp.y - dragOffsetY
                 centerX = blockX + blockWidth * 0.5
                 panelY = blockY
-                gantryY = panelY + panelHeight + 20
                 panelPositions.comboPosX = centerX / screen.w
                 panelPositions.comboPosY = panelY / screen.h
             else
@@ -825,7 +822,6 @@ function script.drawUI()
     end
 
     drawInfoPanel(centerX, panelY)
-    drawGantry(centerX, gantryY)
 
     ------------------------------------------------
     -- Cartel de navegación: aparece recién a los 100m (configurable) de tu casillero, con
