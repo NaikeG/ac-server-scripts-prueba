@@ -446,11 +446,24 @@ local BOX_LENGTH = 4.6 -- largo del auto
 
 -- Corona simple (3 picos), dibujada en el plano horizontal usando el vector "derecha" del
 -- auto como ancho -- se ve razonablemente bien desde cámaras traseras/de repetición, aunque
--- no hay forma de que "mire siempre a cámara" como un cartel 2D.
+-- no hay forma de que "mire siempre a cámara" como un cartel 2D. Cada trazo se dibuja varias
+-- veces con un pequeño desplazamiento perpendicular, para simular grosor (no hay un
+-- parámetro de grosor confirmado en render.debugLine).
+local function drawThickLine3D(p1, p2, color, upVec, thickness)
+    local steps = 3
+    for s = -1, 1 do
+        local offset = s * thickness * 0.5
+        local o1 = vec3(p1.x + upVec.x * offset, p1.y + upVec.y * offset, p1.z + upVec.z * offset)
+        local o2 = vec3(p2.x + upVec.x * offset, p2.y + upVec.y * offset, p2.z + upVec.z * offset)
+        render.debugLine(o1, o2, color)
+    end
+end
+
 local function drawCrown3D(centerX, baseY, centerZ, rightX, rightZ, size, color)
     local halfW = size * 0.5
     local peakH = size * 0.6
     local baseDip = size * 0.15
+    local thickUp = vec3(0, 1, 0) -- engrosa "hacia arriba/abajo", perpendicular al plano de la corona
 
     local function pt(rightOffset, heightOffset)
         return vec3(centerX + rightX * rightOffset, baseY + heightOffset, centerZ + rightZ * rightOffset)
@@ -464,13 +477,14 @@ local function drawCrown3D(centerX, baseY, centerZ, rightX, rightZ, size, color)
     local pRightPeak = pt(halfW * 0.5, peakH)
     local pRight = pt(halfW, 0)
 
-    render.debugLine(pLeft, pLeftPeak, color)
-    render.debugLine(pLeftPeak, pLeftDip, color)
-    render.debugLine(pLeftDip, pCenterPeak, color)
-    render.debugLine(pCenterPeak, pRightDip, color)
-    render.debugLine(pRightDip, pRightPeak, color)
-    render.debugLine(pRightPeak, pRight, color)
-    render.debugLine(pLeft, pRight, color) -- base
+    local thickness = size * 0.09
+    drawThickLine3D(pLeft, pLeftPeak, color, thickUp, thickness)
+    drawThickLine3D(pLeftPeak, pLeftDip, color, thickUp, thickness)
+    drawThickLine3D(pLeftDip, pCenterPeak, color, thickUp, thickness)
+    drawThickLine3D(pCenterPeak, pRightDip, color, thickUp, thickness)
+    drawThickLine3D(pRightDip, pRightPeak, color, thickUp, thickness)
+    drawThickLine3D(pRightPeak, pRight, color, thickUp, thickness)
+    drawThickLine3D(pLeft, pRight, color, thickUp, thickness) -- base
 end
 
 function script.draw3D()
@@ -503,7 +517,16 @@ function script.draw3D()
                 end
 
                 local okText, errText = pcall(function()
-                    render.debugText(vec3(pos.x, numberY, pos.z), "1", gold, 3)
+                    -- Se dibuja varias veces con pequeños desplazamientos horizontales (uno
+                    -- al lado del otro, usando el vector "derecha" del auto), para simular
+                    -- un trazo más ancho/grueso -- no hay un parámetro de ancho de fuente
+                    -- confirmado en render.debugText.
+                    local boldOffsets = { -0.12, -0.06, 0, 0.06, 0.12 }
+                    for _, off in ipairs(boldOffsets) do
+                        local tx = pos.x + rx * off
+                        local tz = pos.z + rz * off
+                        render.debugText(vec3(tx, numberY, tz), "1", gold, 3.5)
+                    end
                 end)
                 if not okText then
                     ac.log("[FORMATION] Error dibujando el '1': " .. tostring(errText))
@@ -551,23 +574,31 @@ function script.draw3D()
                             local py = burstY + dy * expandRadius
                             local pz = burst.z + dz * expandRadius
 
-                            local colorPick = p % 3
-                            local color
-                            if colorPick == 0 then
-                                color = rgbm(1, 0.2, 0.1, fade)
-                            elseif colorPick == 1 then
-                                color = rgbm(1, 0.8, 0.2, fade)
-                            else
-                                color = rgbm(1, 1, 1, fade)
-                            end
+                            local baseColor = burst.colors and burst.colors[p] or rgbm(1, 1, 1, 1)
+                            local color = rgbm(baseColor.r, baseColor.g, baseColor.b, fade)
+
                             -- Cada chispa se dibuja como 2 tramos (desde el centro hasta la
-                            -- mitad, y de la mitad a la punta) en vez de 1 sola línea larga,
-                            -- para que se lea como una raya más "gruesa"/visible de lejos.
+                            -- mitad, y de la mitad a la punta), y cada tramo se repite 3
+                            -- veces con un pequeño desplazamiento vertical, para que se lea
+                            -- como una raya más "gruesa"/con cuerpo real en vez de un simple
+                            -- palito fino.
                             local midX = burst.x + dx * expandRadius * 0.5
                             local midY = burstY + dy * expandRadius * 0.5
                             local midZ = burst.z + dz * expandRadius * 0.5
-                            render.debugLine(vec3(burst.x, burstY, burst.z), vec3(midX, midY, midZ), color)
-                            render.debugLine(vec3(midX, midY, midZ), vec3(px, py, pz), color)
+                            local thick = 0.12
+                            for off = -1, 1 do
+                                local oy = off * thick
+                                render.debugLine(
+                                    vec3(burst.x, burstY + oy, burst.z),
+                                    vec3(midX, midY + oy, midZ),
+                                    color
+                                )
+                                render.debugLine(
+                                    vec3(midX, midY + oy, midZ),
+                                    vec3(px, py + oy, pz),
+                                    color
+                                )
+                            end
                         end
                     end
                 end
@@ -666,9 +697,32 @@ function script.update(dt)
                         local localRight = math.sin(angRad)
                         local bx = pos.x + (rx * localRight + fx * localFwd) * ringRadius
                         local bz = pos.z + (rz * localRight + fz * localFwd) * ringRadius
+
+                        -- Colores al azar por chispa, elegidos de una lista de colores
+                        -- vivos típicos de fuegos artificiales (RGB al azar puro podía dar
+                        -- combinaciones grisáceas/apagadas) -- fijados una sola vez acá, no
+                        -- en cada cuadro del dibujo, para que cada chispa mantenga su color
+                        -- durante todo el estallido.
+                        local vividColors = {
+                            rgbm(1, 0.15, 0.1, 1),   -- rojo
+                            rgbm(1, 0.55, 0.05, 1),  -- naranja
+                            rgbm(1, 0.85, 0.1, 1),   -- amarillo/dorado
+                            rgbm(0.15, 1, 0.2, 1),   -- verde
+                            rgbm(0.1, 0.6, 1, 1),    -- celeste
+                            rgbm(0.3, 0.3, 1, 1),    -- azul
+                            rgbm(0.85, 0.15, 1, 1),  -- violeta
+                            rgbm(1, 0.15, 0.7, 1),   -- magenta
+                            rgbm(1, 1, 1, 1),        -- blanco
+                        }
+                        local sparkColors = {}
+                        for p = 1, BURST_SPARK_COUNT do
+                            sparkColors[p] = vividColors[math.random(1, #vividColors)]
+                        end
+
                         table.insert(activeBursts, {
                             startTime = sim.currentSessionTime,
-                            x = bx, y = pos.y, z = bz -- nivel del piso; la altura del estallido se calcula en el dibujo
+                            x = bx, y = pos.y, z = bz, -- nivel del piso; la altura del estallido se calcula en el dibujo
+                            colors = sparkColors
                         })
                     end
                 end
