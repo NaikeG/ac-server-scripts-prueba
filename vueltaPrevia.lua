@@ -354,7 +354,6 @@ ac.onResolutionChange(function()
 end)
 
 local BENGALAS_ENABLED = true
-local FIREWORK_HEIGHT = 2.4 -- el estallido ocurre a esta altura (configurable), por defecto 2x un auto típico de 1.2m
 
 ac.onOnlineWelcome(function(message, config)
     findPositionField()
@@ -364,7 +363,6 @@ ac.onOnlineWelcome(function(message, config)
     SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
     TOTAL_GRID_SLOTS = config:get("FORMATION", "TOTAL_GRID_SLOTS", 30)
     BENGALAS_ENABLED = config:get("FORMATION", "BENGALAS_ENABLED", 1) == 1
-    FIREWORK_HEIGHT = config:get("FORMATION", "FIREWORK_HEIGHT_METERS", 2.4)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -390,50 +388,53 @@ ac.onOnlineWelcome(function(message, config)
     )
 end)
 
--- ===== Fuegos artificiales que siguen al ganador durante 1 minuto =====
--- Mucho más simple que el sistema de bengalas por toda la grilla: en vez de necesitar la
--- posición de cada casillero, solo hace falta encontrar el auto del ganador (por nombre,
--- ya que el evento ahora lo manda SOLO el propio ganador) y seguir su posición en vivo.
-local WINNER_EFFECT_DURATION = 60 -- 1 minuto
-local BURST_INTERVAL = 1.5        -- segundos entre cada estallido
-local BURST_LIFETIME = 1.2        -- cuánto dura cada estallido en pantalla
-local BURST_RADIUS = 9            -- bastante más grande que antes (2.5m), para que se vea de lejos
-local BURST_SPARK_COUNT = 28       -- más chispas, para que se vea más denso y lleno
-local CAR_HEIGHT_ESTIMATE = 1.2   -- estimado (no confirmado por API), un auto de turismo típico
+-- ===== Números de podio (P1 dorado, P2 plateado, P3 bronce) siguiendo a cada auto =====
+-- Mucho más simple que las bengalas/fuegos artificiales: un solo número grande y legible
+-- arriba de cada uno de los 3 autos del podio, sin ningún efecto de partículas.
+local PODIUM_EFFECT_DURATION = 60 -- 1 minuto
 
-local winnerEffectTimer = 0
-local winnerCarIndex = nil
-local nextBurstTimer = 0
-local activeBursts = {} -- lista de { startTime, x, y (nivel del piso), z }
+-- [1]=P1, [2]=P2, [3]=P3 -- cada uno con su propio timer e índice de auto (independientes)
+local podiumCars = {
+    [1] = { timer = 0, carIndex = nil },
+    [2] = { timer = 0, carIndex = nil },
+    [3] = { timer = 0, carIndex = nil },
+}
 
-raceWonEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Race Won")
+local PODIUM_COLORS = {
+    [1] = rgbm(1.6, 1.25, 0.1, 1), -- dorado
+    [2] = rgbm(0.85, 0.87, 0.92, 1), -- plateado
+    [3] = rgbm(0.85, 0.5, 0.2, 1), -- bronce
+}
+
+podiumEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Podium Position"),
+    position = ac.StructItem.float()
 }, function(sender, message)
+    local pos = message.position
+    if pos ~= 1 and pos ~= 2 and pos ~= 3 then return end
     if not BENGALAS_ENABLED then return end
-    if winnerEffectTimer > 0 then return end -- ya está en curso, no reiniciar
+    if podiumCars[pos].timer > 0 then return end -- ya está en curso para este puesto, no reiniciar
 
-    -- Busca el índice del auto del ganador comparando nombres (el evento ahora lo manda
-    -- específicamente el propio ganador, así que sender:driverName() es confiable acá)
+    -- Busca el índice del auto comparando nombres (el evento lo manda específicamente quien
+    -- logró ese puesto, así que sender:driverName() es confiable acá)
     local okCount, carsCount = pcall(function() return sim.carsCount end)
     if okCount then
-        local winnerName = sender:driverName()
+        local driverName = sender:driverName()
         for i = 0, carsCount - 1 do
             local okOther, otherCar = pcall(function() return ac.getCar(i) end)
             if okOther and otherCar then
                 local okName, name = pcall(function() return otherCar:driverName() end)
-                if okName and name == winnerName then
-                    winnerCarIndex = i
+                if okName and name == driverName then
+                    podiumCars[pos].carIndex = i
                     break
                 end
             end
         end
     end
 
-    winnerEffectTimer = WINNER_EFFECT_DURATION
-    nextBurstTimer = 0
-    activeBursts = {}
-    ac.log("[FORMATION] Fuegos artificiales activados, siguiendo a " .. tostring(sender:driverName()) ..
-        " (auto índice " .. tostring(winnerCarIndex) .. ")")
+    podiumCars[pos].timer = PODIUM_EFFECT_DURATION
+    ac.log("[FORMATION] Número de podio P" .. pos .. " activado, siguiendo a " .. tostring(sender:driverName()) ..
+        " (auto índice " .. tostring(podiumCars[pos].carIndex) .. ")")
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -444,169 +445,27 @@ ac.SharedNamespace.ServerScript)
 local BOX_WIDTH = 2.4  -- ancho del auto
 local BOX_LENGTH = 4.6 -- largo del auto
 
--- Corona simple (3 picos), dibujada en el plano horizontal usando el vector "derecha" del
--- auto como ancho -- se ve razonablemente bien desde cámaras traseras/de repetición, aunque
--- no hay forma de que "mire siempre a cámara" como un cartel 2D. Cada trazo se dibuja varias
--- veces con un pequeño desplazamiento perpendicular, para simular grosor (no hay un
--- parámetro de grosor confirmado en render.debugLine).
-local function drawThickLine3D(p1, p2, color, upVec, thickness)
-    local steps = 3
-    for s = -1, 1 do
-        local offset = s * thickness * 0.5
-        local o1 = vec3(p1.x + upVec.x * offset, p1.y + upVec.y * offset, p1.z + upVec.z * offset)
-        local o2 = vec3(p2.x + upVec.x * offset, p2.y + upVec.y * offset, p2.z + upVec.z * offset)
-        render.debugLine(o1, o2, color)
-    end
-end
-
-local function drawCrown3D(centerX, baseY, centerZ, rightX, rightZ, size, color)
-    local halfW = size * 0.5
-    local peakH = size * 0.6
-    local baseDip = size * 0.15
-    local thickUp = vec3(0, 1, 0) -- engrosa "hacia arriba/abajo", perpendicular al plano de la corona
-
-    local function pt(rightOffset, heightOffset)
-        return vec3(centerX + rightX * rightOffset, baseY + heightOffset, centerZ + rightZ * rightOffset)
-    end
-
-    local pLeft = pt(-halfW, 0)
-    local pLeftPeak = pt(-halfW * 0.5, peakH)
-    local pLeftDip = pt(-halfW * 0.25, baseDip)
-    local pCenterPeak = pt(0, peakH * 1.3)
-    local pRightDip = pt(halfW * 0.25, baseDip)
-    local pRightPeak = pt(halfW * 0.5, peakH)
-    local pRight = pt(halfW, 0)
-
-    local thickness = size * 0.09
-    drawThickLine3D(pLeft, pLeftPeak, color, thickUp, thickness)
-    drawThickLine3D(pLeftPeak, pLeftDip, color, thickUp, thickness)
-    drawThickLine3D(pLeftDip, pCenterPeak, color, thickUp, thickness)
-    drawThickLine3D(pCenterPeak, pRightDip, color, thickUp, thickness)
-    drawThickLine3D(pRightDip, pRightPeak, color, thickUp, thickness)
-    drawThickLine3D(pRightPeak, pRight, color, thickUp, thickness)
-    drawThickLine3D(pLeft, pRight, color, thickUp, thickness) -- base
-end
-
 function script.draw3D()
-    -- "1" dorado + corona, flotando arriba del auto ganador durante todo el minuto del
-    -- efecto -- independiente de los estallidos (se ve todo el tiempo, no solo cuando hay
-    -- fuegos artificiales en curso).
-    if winnerEffectTimer > 0 and winnerCarIndex ~= nil then
-        local okWinner, winnerCar = pcall(function() return ac.getCar(winnerCarIndex) end)
-        if okWinner and winnerCar then
-            local okPos, pos = pcall(function() return winnerCar.position end)
-            if okPos then
-                local okLook, look = pcall(function() return winnerCar.look end)
-                local fx, fz
-                if okLook and look ~= nil then
-                    local len = math.sqrt(look.x * look.x + look.z * look.z)
-                    if len > 0.001 then fx, fz = look.x / len, look.z / len end
-                end
-                if fx == nil then fx, fz = trueFinishForwardX or 0, trueFinishForwardZ or 1 end
-                local rx, rz = -fz, fx
-
-                local gold = rgbm(1.6, 1.25, 0.1, 1) -- dorado, con algo de glow
-                local crownY = pos.y + 2.6
-                local numberY = pos.y + 3.3
-
-                local okCrown, errCrown = pcall(function()
-                    drawCrown3D(pos.x, crownY, pos.z, rx, rz, 1.2, gold)
-                end)
-                if not okCrown then
-                    ac.log("[FORMATION] Error dibujando la corona: " .. tostring(errCrown))
-                end
-
-                local okText, errText = pcall(function()
-                    -- Se dibuja varias veces con pequeños desplazamientos horizontales (uno
-                    -- al lado del otro, usando el vector "derecha" del auto), para simular
-                    -- un trazo más ancho/grueso -- no hay un parámetro de ancho de fuente
-                    -- confirmado en render.debugText.
-                    local boldOffsets = { -0.12, -0.06, 0, 0.06, 0.12 }
-                    for _, off in ipairs(boldOffsets) do
-                        local tx = pos.x + rx * off
-                        local tz = pos.z + rz * off
-                        render.debugText(vec3(tx, numberY, tz), "1", gold, 3.5)
-                    end
-                end)
-                if not okText then
-                    ac.log("[FORMATION] Error dibujando el '1': " .. tostring(errText))
-                end
-            end
-        end
-    end
-
-    -- Fuegos artificiales al ganar la carrera: van ACÁ ARRIBA, antes que cualquier "return"
-    -- temprano del marcador de grilla (más abajo), porque para cuando termina la carrera,
-    -- Vuelta Previa casi seguro ya está apagada -- si este bloque estuviera después de esos
-    -- return, nunca llegaría a ejecutarse.
-    if winnerEffectTimer > 0 and #activeBursts > 0 then
-        local okBursts, errBursts = pcall(function()
-            for _, burst in ipairs(activeBursts) do
-                local age = (sim.currentSessionTime - burst.startTime) / 1000
-                local t = age / BURST_LIFETIME
-                if t >= 0 and t <= 1 then
-                    -- Fase de "cohete subiendo": una traza desde el piso hasta la altura de
-                    -- estallido (2x el alto del auto), durante el primer 30% de la duración.
-                    local riseT = math.min(t / 0.3, 1)
-                    local currentTipY = burst.y + FIREWORK_HEIGHT * riseT
-                    render.debugLine(
-                        vec3(burst.x, burst.y, burst.z),
-                        vec3(burst.x, currentTipY, burst.z),
-                        rgbm(1, 0.7, 0.3, math.max(1 - riseT, 0.15))
-                    )
-
-                    -- Fase de estallido: recién ocupa, una vez que el "cohete" llegó arriba
-                    if t > 0.3 then
-                        local burstT = (t - 0.3) / 0.7 -- 0 a 1 dentro de la fase de estallido
-                        local expandRadius = burstT * BURST_RADIUS
-                        local fade = 1 - burstT
-                        local burstY = burst.y + FIREWORK_HEIGHT
-                        for p = 1, BURST_SPARK_COUNT do
-                            -- Direcciones fijas según el índice de cada chispa (no al azar cada
-                            -- cuadro), para que cada una mantenga su propia trayectoria durante
-                            -- todo el estallido en vez de saltar de un lado a otro.
-                            local angleH = (p / BURST_SPARK_COUNT) * math.pi * 2
-                            local angleV = ((p % 4) / 4 - 0.5) * math.pi * 0.6
-                            local dx = math.cos(angleH) * math.cos(angleV)
-                            local dy = math.sin(angleV) - burstT * 0.8 -- cae un poco con el tiempo, como la gravedad
-                            local dz = math.sin(angleH) * math.cos(angleV)
-                            local px = burst.x + dx * expandRadius
-                            local py = burstY + dy * expandRadius
-                            local pz = burst.z + dz * expandRadius
-
-                            local baseColor = burst.colors and burst.colors[p] or rgbm(1, 1, 1, 1)
-                            local color = rgbm(baseColor.r, baseColor.g, baseColor.b, fade)
-
-                            -- Cada chispa se dibuja como 2 tramos (desde el centro hasta la
-                            -- mitad, y de la mitad a la punta), y cada tramo se repite 3
-                            -- veces con un pequeño desplazamiento vertical, para que se lea
-                            -- como una raya más "gruesa"/con cuerpo real en vez de un simple
-                            -- palito fino.
-                            local midX = burst.x + dx * expandRadius * 0.5
-                            local midY = burstY + dy * expandRadius * 0.5
-                            local midZ = burst.z + dz * expandRadius * 0.5
-                            local thick = 0.12
-                            for off = -1, 1 do
-                                local oy = off * thick
-                                render.debugLine(
-                                    vec3(burst.x, burstY + oy, burst.z),
-                                    vec3(midX, midY + oy, midZ),
-                                    color
-                                )
-                                render.debugLine(
-                                    vec3(midX, midY + oy, midZ),
-                                    vec3(px, py + oy, pz),
-                                    color
-                                )
-                            end
-                        end
+    -- Número de podio (1/2/3) flotando arriba de cada auto que llegó en el podio, en su
+    -- color correspondiente (oro/plata/bronce) -- un solo render.debugText por número, sin
+    -- líneas superpuestas ni efectos de partículas.
+    local okPodium, errPodium = pcall(function()
+        for pos = 1, 3 do
+            local entry = podiumCars[pos]
+            if entry.timer > 0 and entry.carIndex ~= nil then
+                local okCar, thisCar = pcall(function() return ac.getCar(entry.carIndex) end)
+                if okCar and thisCar then
+                    local okPos2, carPos = pcall(function() return thisCar.position end)
+                    if okPos2 then
+                        local numberY = carPos.y + 3.0
+                        render.debugText(vec3(carPos.x, numberY, carPos.z), tostring(pos), PODIUM_COLORS[pos], 6)
                     end
                 end
             end
-        end)
-        if not okBursts then
-            ac.log("[FORMATION] Error dibujando fuegos artificiales: " .. tostring(errBursts))
         end
+    end)
+    if not okPodium then
+        ac.log("[FORMATION] Error dibujando números de podio: " .. tostring(errPodium))
     end
 
     if myGridPosition == nil or gridSlotWorldPos[myGridPosition] == nil then return end
@@ -662,79 +521,9 @@ end
 function script.update(dt)
     checkFinishLineCrossing(dt)
 
-    if winnerEffectTimer > 0 then
-        winnerEffectTimer = math.max(winnerEffectTimer - dt, 0)
-        nextBurstTimer = nextBurstTimer - dt
-
-        if nextBurstTimer <= 0 and winnerCarIndex ~= nil then
-            nextBurstTimer = BURST_INTERVAL
-            local okWinner, winnerCar = pcall(function() return ac.getCar(winnerCarIndex) end)
-            if okWinner and winnerCar then
-                local okPos, pos = pcall(function() return winnerCar.position end)
-                if okPos then
-                    local okLook, look = pcall(function() return winnerCar.look end)
-                    local fx, fz
-                    if okLook and look ~= nil then
-                        local len = math.sqrt(look.x * look.x + look.z * look.z)
-                        if len > 0.001 then fx, fz = look.x / len, look.z / len end
-                    end
-                    if fx == nil then
-                        -- Respaldo: si no se puede leer la orientación del auto ganador
-                        -- (puede pasar si no soy yo mismo quien ganó), se usa la orientación
-                        -- de la línea de meta como aproximación.
-                        fx, fz = trueFinishForwardX or 0, trueFinishForwardZ or 1
-                    end
-                    local rx, rz = -fz, fx
-
-                    -- Anillo de estallidos alrededor del auto, evitando la zona de ADELANTE
-                    -- (donde estaría mirando el conductor) para no taparle la vista -- cubre
-                    -- solo la mitad de atrás/costados (90° a 270°, no 0° que es el frente).
-                    local ringRadius = 5
-                    local angles = { 90, 140, 180, 220, 270 }
-                    for _, angDeg in ipairs(angles) do
-                        local angRad = math.rad(angDeg)
-                        local localFwd = math.cos(angRad)
-                        local localRight = math.sin(angRad)
-                        local bx = pos.x + (rx * localRight + fx * localFwd) * ringRadius
-                        local bz = pos.z + (rz * localRight + fz * localFwd) * ringRadius
-
-                        -- Colores al azar por chispa, elegidos de una lista de colores
-                        -- vivos típicos de fuegos artificiales (RGB al azar puro podía dar
-                        -- combinaciones grisáceas/apagadas) -- fijados una sola vez acá, no
-                        -- en cada cuadro del dibujo, para que cada chispa mantenga su color
-                        -- durante todo el estallido.
-                        local vividColors = {
-                            rgbm(1, 0.15, 0.1, 1),   -- rojo
-                            rgbm(1, 0.55, 0.05, 1),  -- naranja
-                            rgbm(1, 0.85, 0.1, 1),   -- amarillo/dorado
-                            rgbm(0.15, 1, 0.2, 1),   -- verde
-                            rgbm(0.1, 0.6, 1, 1),    -- celeste
-                            rgbm(0.3, 0.3, 1, 1),    -- azul
-                            rgbm(0.85, 0.15, 1, 1),  -- violeta
-                            rgbm(1, 0.15, 0.7, 1),   -- magenta
-                            rgbm(1, 1, 1, 1),        -- blanco
-                        }
-                        local sparkColors = {}
-                        for p = 1, BURST_SPARK_COUNT do
-                            sparkColors[p] = vividColors[math.random(1, #vividColors)]
-                        end
-
-                        table.insert(activeBursts, {
-                            startTime = sim.currentSessionTime,
-                            x = bx, y = pos.y, z = bz, -- nivel del piso; la altura del estallido se calcula en el dibujo
-                            colors = sparkColors
-                        })
-                    end
-                end
-            end
-        end
-
-        -- Limpia los estallidos ya terminados, para no acumular la lista sin límite
-        for i = #activeBursts, 1, -1 do
-            local age = (sim.currentSessionTime - activeBursts[i].startTime) / 1000
-            if age > BURST_LIFETIME then
-                table.remove(activeBursts, i)
-            end
+    for pos = 1, 3 do
+        if podiumCars[pos].timer > 0 then
+            podiumCars[pos].timer = math.max(podiumCars[pos].timer - dt, 0)
         end
     end
 
