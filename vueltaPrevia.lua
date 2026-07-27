@@ -354,6 +354,7 @@ ac.onResolutionChange(function()
 end)
 
 local BENGALAS_ENABLED = true
+local FIREWORK_HEIGHT = 2.4 -- el estallido ocurre a esta altura (configurable), por defecto 2x un auto típico de 1.2m
 
 ac.onOnlineWelcome(function(message, config)
     findPositionField()
@@ -363,6 +364,7 @@ ac.onOnlineWelcome(function(message, config)
     SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
     TOTAL_GRID_SLOTS = config:get("FORMATION", "TOTAL_GRID_SLOTS", 30)
     BENGALAS_ENABLED = config:get("FORMATION", "BENGALAS_ENABLED", 1) == 1
+    FIREWORK_HEIGHT = config:get("FORMATION", "FIREWORK_HEIGHT_METERS", 2.4)
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
     else
@@ -393,11 +395,12 @@ end)
 local WINNER_EFFECT_DURATION = 60 -- 1 minuto
 local BURST_INTERVAL = 1.5        -- segundos entre cada estallido
 local BURST_LIFETIME = 1.2        -- cuánto dura cada estallido en pantalla
+local CAR_HEIGHT_ESTIMATE = 1.2   -- estimado (no confirmado por API), un auto de turismo típico
 
 local winnerEffectTimer = 0
 local winnerCarIndex = nil
 local nextBurstTimer = 0
-local activeBursts = {} -- lista de { startTime, x, y, z }
+local activeBursts = {} -- lista de { startTime, x, y (nivel del piso), z }
 
 raceWonEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Race Won")
@@ -448,31 +451,46 @@ function script.draw3D()
                 local age = (sim.currentSessionTime - burst.startTime) / 1000
                 local t = age / BURST_LIFETIME
                 if t >= 0 and t <= 1 then
-                    local expandRadius = t * 6 -- el estallido se abre hasta 6m de radio
-                    local fade = 1 - t
-                    for p = 1, 16 do
-                        -- Direcciones fijas según el índice de cada chispa (no al azar cada
-                        -- cuadro), para que cada una mantenga su propia trayectoria durante
-                        -- todo el estallido en vez de saltar de un lado a otro.
-                        local angleH = (p / 16) * math.pi * 2
-                        local angleV = ((p % 4) / 4 - 0.5) * math.pi * 0.6
-                        local dx = math.cos(angleH) * math.cos(angleV)
-                        local dy = math.sin(angleV) - t * 1.5 -- cae un poco con el tiempo, como la gravedad
-                        local dz = math.sin(angleH) * math.cos(angleV)
-                        local px = burst.x + dx * expandRadius
-                        local py = burst.y + dy * expandRadius
-                        local pz = burst.z + dz * expandRadius
+                    -- Fase de "cohete subiendo": una traza desde el piso hasta la altura de
+                    -- estallido (2x el alto del auto), durante el primer 30% de la duración.
+                    local riseT = math.min(t / 0.3, 1)
+                    local currentTipY = burst.y + FIREWORK_HEIGHT * riseT
+                    render.debugLine(
+                        vec3(burst.x, burst.y, burst.z),
+                        vec3(burst.x, currentTipY, burst.z),
+                        rgbm(1, 0.7, 0.3, math.max(1 - riseT, 0.15))
+                    )
 
-                        local colorPick = p % 3
-                        local color
-                        if colorPick == 0 then
-                            color = rgbm(1, 0.2, 0.1, fade)
-                        elseif colorPick == 1 then
-                            color = rgbm(1, 0.8, 0.2, fade)
-                        else
-                            color = rgbm(1, 1, 1, fade)
+                    -- Fase de estallido: recién ocupa, una vez que el "cohete" llegó arriba
+                    if t > 0.3 then
+                        local burstT = (t - 0.3) / 0.7 -- 0 a 1 dentro de la fase de estallido
+                        local expandRadius = burstT * 2.5 -- bien más contenido que antes
+                        local fade = 1 - burstT
+                        local burstY = burst.y + FIREWORK_HEIGHT
+                        for p = 1, 16 do
+                            -- Direcciones fijas según el índice de cada chispa (no al azar cada
+                            -- cuadro), para que cada una mantenga su propia trayectoria durante
+                            -- todo el estallido en vez de saltar de un lado a otro.
+                            local angleH = (p / 16) * math.pi * 2
+                            local angleV = ((p % 4) / 4 - 0.5) * math.pi * 0.6
+                            local dx = math.cos(angleH) * math.cos(angleV)
+                            local dy = math.sin(angleV) - burstT * 0.8 -- cae un poco con el tiempo, como la gravedad
+                            local dz = math.sin(angleH) * math.cos(angleV)
+                            local px = burst.x + dx * expandRadius
+                            local py = burstY + dy * expandRadius
+                            local pz = burst.z + dz * expandRadius
+
+                            local colorPick = p % 3
+                            local color
+                            if colorPick == 0 then
+                                color = rgbm(1, 0.2, 0.1, fade)
+                            elseif colorPick == 1 then
+                                color = rgbm(1, 0.8, 0.2, fade)
+                            else
+                                color = rgbm(1, 1, 1, fade)
+                            end
+                            render.debugLine(vec3(burst.x, burstY, burst.z), vec3(px, py, pz), color)
                         end
-                        render.debugLine(vec3(burst.x, burst.y, burst.z), vec3(px, py, pz), color)
                     end
                 end
             end
@@ -547,7 +565,7 @@ function script.update(dt)
                 if okPos then
                     table.insert(activeBursts, {
                         startTime = sim.currentSessionTime,
-                        x = pos.x, y = pos.y + 2, z = pos.z -- un poco arriba del techo del auto
+                        x = pos.x, y = pos.y, z = pos.z -- nivel del piso; la altura del estallido se calcula en el dibujo
                     })
                 end
             end
