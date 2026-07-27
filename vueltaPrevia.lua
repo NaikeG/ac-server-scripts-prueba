@@ -457,7 +457,7 @@ function script.draw3D()
                 if okCar and thisCar then
                     local okPos2, carPos = pcall(function() return thisCar.position end)
                     if okPos2 then
-                        local numberY = carPos.y + 3.0
+                        local numberY = carPos.y + 4.3
                         render.debugText(vec3(carPos.x, numberY, carPos.z), tostring(pos), PODIUM_COLORS[pos], 6)
                     end
                 end
