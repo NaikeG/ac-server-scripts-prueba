@@ -348,13 +348,6 @@ formationEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
--- Aviso simple (sin datos) para que startLights.lua arranque su secuencia automáticamente
--- al desactivar Vuelta Previa, sin depender de un botón aparte.
-autoStartLightsEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Auto Start Lights")
-}, function(sender, message) end,
-ac.SharedNamespace.ServerScript)
-
 ac.onResolutionChange(function()
     screen.w = ac.getSim().windowWidth
     screen.h = ac.getSim().windowHeight
@@ -390,12 +383,8 @@ ac.onOnlineWelcome(function(message, config)
                 enabled = state.enabled
             })
             ac.log("[FORMATION] Estado: " .. tostring(state.enabled))
-            if not state.enabled then
-                -- Al desactivar Vuelta Previa, se arranca automáticamente la secuencia de
-                -- Start Lights, para no depender de que el admin apriete un botón aparte.
-                autoStartLightsEvent({})
-                ac.log("[FORMATION] Vuelta Previa desactivada -- disparando Start Lights automáticamente")
-            end
+            -- Nota: startLights.lua escucha este mismo evento "Formation Lap" y arranca su
+            -- secuencia solo cuando ve que pasa a "false" -- ya no hace falta un aviso aparte.
         end,
         adminFlag
     )
@@ -408,6 +397,8 @@ end)
 local WINNER_EFFECT_DURATION = 60 -- 1 minuto
 local BURST_INTERVAL = 1.5        -- segundos entre cada estallido
 local BURST_LIFETIME = 1.2        -- cuánto dura cada estallido en pantalla
+local BURST_RADIUS = 9            -- bastante más grande que antes (2.5m), para que se vea de lejos
+local BURST_SPARK_COUNT = 28       -- más chispas, para que se vea más denso y lleno
 local CAR_HEIGHT_ESTIMATE = 1.2   -- estimado (no confirmado por API), un auto de turismo típico
 
 local winnerEffectTimer = 0
@@ -477,14 +468,14 @@ function script.draw3D()
                     -- Fase de estallido: recién ocupa, una vez que el "cohete" llegó arriba
                     if t > 0.3 then
                         local burstT = (t - 0.3) / 0.7 -- 0 a 1 dentro de la fase de estallido
-                        local expandRadius = burstT * 2.5 -- bien más contenido que antes
+                        local expandRadius = burstT * BURST_RADIUS
                         local fade = 1 - burstT
                         local burstY = burst.y + FIREWORK_HEIGHT
-                        for p = 1, 16 do
+                        for p = 1, BURST_SPARK_COUNT do
                             -- Direcciones fijas según el índice de cada chispa (no al azar cada
                             -- cuadro), para que cada una mantenga su propia trayectoria durante
                             -- todo el estallido en vez de saltar de un lado a otro.
-                            local angleH = (p / 16) * math.pi * 2
+                            local angleH = (p / BURST_SPARK_COUNT) * math.pi * 2
                             local angleV = ((p % 4) / 4 - 0.5) * math.pi * 0.6
                             local dx = math.cos(angleH) * math.cos(angleV)
                             local dy = math.sin(angleV) - burstT * 0.8 -- cae un poco con el tiempo, como la gravedad
@@ -502,7 +493,14 @@ function script.draw3D()
                             else
                                 color = rgbm(1, 1, 1, fade)
                             end
-                            render.debugLine(vec3(burst.x, burstY, burst.z), vec3(px, py, pz), color)
+                            -- Cada chispa se dibuja como 2 tramos (desde el centro hasta la
+                            -- mitad, y de la mitad a la punta) en vez de 1 sola línea larga,
+                            -- para que se lea como una raya más "gruesa"/visible de lejos.
+                            local midX = burst.x + dx * expandRadius * 0.5
+                            local midY = burstY + dy * expandRadius * 0.5
+                            local midZ = burst.z + dz * expandRadius * 0.5
+                            render.debugLine(vec3(burst.x, burstY, burst.z), vec3(midX, midY, midZ), color)
+                            render.debugLine(vec3(midX, midY, midZ), vec3(px, py, pz), color)
                         end
                     end
                 end
