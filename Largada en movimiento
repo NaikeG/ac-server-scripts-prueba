@@ -440,6 +440,19 @@ local function drawGantry(centerX, y)
     end
 end
 
+-- Cuadrado intermitente amarillo (mismo estilo que la franja del ícono SC), para poner uno
+-- a cada lado del cartel de texto en la fase amarilla, en vez del semáforo completo (que
+-- sigue usándose tal cual durante la secuencia real de largada, más abajo).
+local function drawBlinkSquare(x, y, size)
+    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+    if blinkOn then
+        ui.drawRectFilled(vec2(x, y), vec2(x + size, y + size), alphaColor(1.0, 0.82, 0.0, 1))
+    else
+        ui.drawRectFilled(vec2(x, y), vec2(x + size, y + size), alphaColor(0.25, 0.2, 0.0, 1))
+    end
+    ui.drawRect(vec2(x, y), vec2(x + size, y + size), alphaColor(0.16, 0.16, 0.16, 1), 0, 0, 2)
+end
+
 local function drawInfoPanel(centerX, y)
     local panelWidth = 420
     local panelHeight = 110
@@ -496,6 +509,13 @@ local function drawInfoPanel(centerX, y)
         ui.popStyleColor()
         ui.popFont()
     end
+
+    -- Un cuadrado intermitente a cada lado del cartel (esta función solo se usa en la fase
+    -- amarilla/decorativa o en modo edición, nunca durante la secuencia real de largada)
+    local squareSize = panelHeight
+    local gap = 12
+    drawBlinkSquare(x - gap - squareSize, y, squareSize)
+    drawBlinkSquare(x + panelWidth + gap, y, squareSize)
 end
 
 local function drawSpeedSign(x, y, size)
@@ -600,7 +620,6 @@ function script.drawUI()
 
     if phase == "yellow" or editingPanelId == MY_PREVIEW_ID then
         drawInfoPanel(centerX, panelY)
-        drawGantry(centerX, gantryY)
     else
         -- Durante la secuencia (rojo -> verde): se oculta el cartel, queda solo el semáforo en su misma posición.
         drawGantry(centerX, gantryY)
