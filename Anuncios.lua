@@ -274,13 +274,15 @@ local function settleAndAnnouncePodium(myName)
                 if podium then
                     if i == 1 then
                         table.insert(pendingChats, "🏆 " .. r.name .. " HA GANADO LA CARRERA!")
-                        -- Se dispara SOLO desde el cliente del propio ganador (no desde todos
-                        -- los clientes como antes), para que quien lo reciba pueda identificar
-                        -- de quién se trata por el remitente del evento.
-                        raceWonEvent({})
                     else
                         table.insert(pendingChats, podium.icon .. " " .. r.name .. " terminó en P" .. i .. "!")
                     end
+                    -- Se dispara SOLO desde el cliente de quien logró ese puesto (no desde
+                    -- todos los clientes), para que quien lo reciba pueda identificar de
+                    -- quién se trata por el remitente del evento. El puesto (1/2/3) viaja
+                    -- como dato numérico, ya que los strings no se pueden mandar de forma
+                    -- confiable por estos eventos.
+                    podiumEvent({ position = i })
                 else
                     table.insert(pendingChats, "🏁 " .. r.name .. " terminó en P" .. i .. "!")
                 end
@@ -547,11 +549,14 @@ local PANEL_GLOBAL_ID = {
 local globalDragging = false
 local globalDragPanelId = 0
 
--- Aviso simple (sin datos) de que la carrera se ganó, para que vueltaPrevia.lua dispare el
--- efecto de bengalas en la línea de largada/llegada. No hace falta el nombre del ganador acá
--- -- solo importa el disparo en sí.
-raceWonEvent = ac.OnlineEvent({
-    key = ac.StructItem.key("Race Won")
+-- Aviso de que alguien llegó al podio (1/2/3), para que vueltaPrevia.lua muestre el número
+-- correspondiente arriba de su auto. Lo manda específicamente quien logró ese puesto (no
+-- todos los clientes), para que quien lo reciba identifique de quién se trata por el
+-- remitente del evento -- el puesto viaja como número, ya que los strings no se pueden
+-- mandar de forma confiable por estos eventos.
+podiumEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Podium Position"),
+    position = ac.StructItem.float() -- 1, 2 o 3
 }, function(sender, message) end,
 ac.SharedNamespace.ServerScript)
 
