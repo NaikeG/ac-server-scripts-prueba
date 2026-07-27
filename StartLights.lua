@@ -70,6 +70,47 @@ local function scheduleResend(payload, delaySeconds)
     table.insert(resendQueue, { timer = delaySeconds, payload = payload })
 end
 
+-- Lógica de disparo de la secuencia, en una función aparte para poder llamarla tanto desde
+-- el botón de admin como desde el aviso automático de vueltaPrevia.lua (al desactivar Vuelta
+-- Previa).
+local function doTriggerStart()
+    math.randomseed(os.time())
+    ac.log("Start Lights Message Sent")
+    ac.setMessage("Start Lights Command Sent", "")
+    local payload
+    if isf1style == 0 then
+        payload = {
+            startTime = sim.currentSessionTime + seqDuration,
+            delayTime = math.random(lightsOutMin, lightsOutMax)
+        }
+    else
+        payload = { startTime = sim.currentSessionTime + seqDuration, delayTime = 99999999 }
+    end
+    triggerStart(payload)
+    -- Reenvíos distribuidos en una ventana más amplia, mismo mecanismo ya probado
+    scheduleResend(payload, 0.2)
+    scheduleResend(payload, 0.5)
+    scheduleResend(payload, 1)
+    scheduleResend(payload, 2)
+    scheduleResend(payload, 4)
+    scheduleResend(payload, 7)
+end
+
+-- Aviso de vueltaPrevia.lua: al desactivar Vuelta Previa, arranca la secuencia sola, sin
+-- depender de que el admin apriete el botón de acá aparte.
+autoStartLightsEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Auto Start Lights")
+}, function(sender, message)
+    -- Sin este filtro, TODOS los clientes recibirían el aviso y cada uno dispararía su
+    -- propia secuencia con un horario aleatorio distinto, desincronizando todo -- solo
+    -- actúa el mismo cliente que mandó el aviso (el admin que desactivó Vuelta Previa),
+    -- igual que si hubiera apretado el botón manual él mismo.
+    if sender:driverName() ~= car:driverName() then return end
+    ac.log("[STARTLIGHTS] Disparo automático recibido (Vuelta Previa desactivada)")
+    doTriggerStart()
+end,
+ac.SharedNamespace.ServerScript)
+
 -- Colores "flúor" (valores por encima de 1 generan un leve glow/bloom en CSP)
 local neonRed = rgbm(1.6, 0.05, 0.05, 1)
 local neonGreen = rgbm(0.05, 1.8, 0.1, 1)
@@ -177,33 +218,10 @@ ac.onOnlineWelcome(function(message, config) --Reads the script config from the 
     requestLightsSyncEvent({})
 
     ui.registerOnlineExtra(ui.Icons.TrafficLight, "Start Lights", function() return true end, nil, function(okClicked)
-        math.randomseed(os.time())
-        ac.log("Start Lights Message Sent")
-        ac.setMessage("Start Lights Command Sent", "")
         if debugMode == 1 then
             ac.debug("Settings Dump", tostring(config))
         end
-        local payload
-        if isf1style == 0 then
-            payload = {
-                startTime = sim.currentSessionTime + seqDuration,
-                delayTime = math.random(lightsOutMin, lightsOutMax)
-            }
-        else
-            payload = { startTime = sim.currentSessionTime + seqDuration, delayTime = 99999999 }
-        end
-        triggerStart(payload)
-        -- Reenvíos distribuidos en una ventana más amplia (antes solo cubrían el primer
-        -- medio segundo). Como el mensaje lleva un horario ABSOLUTO, reenviarlo más tarde no
-        -- desincroniza a nadie -- solo aumenta las chances de que a alguien con un corte de
-        -- conexión más largo que un instante igual le llegue alguna copia, dentro de la
-        -- ventana real de varios segundos que suele haber hasta el verde.
-        scheduleResend(payload, 0.2)
-        scheduleResend(payload, 0.5)
-        scheduleResend(payload, 1)
-        scheduleResend(payload, 2)
-        scheduleResend(payload, 4)
-        scheduleResend(payload, 7)
+        doTriggerStart()
     end, adminFlag)
 
     if isf1style == 1 then
