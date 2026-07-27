@@ -41,6 +41,7 @@ local biggestFont = ui.Font.Title
 -- se muestra con contenido de ejemplo cuando el menú de admin lo tiene seleccionado a él. =====
 local editingPanelId = 0
 local MY_PREVIEW_ID = 5
+local BLUEFLAG_PREVIEW_ID = 11
 
 panelPreviewEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Panel Preview Mode"),
@@ -431,15 +432,15 @@ end
 -- flecha grande centrada, y la franja (azul en vez de amarilla, parpadeo más rápido) tiene
 -- el texto "CUIDADO".
 local function drawBlueFlagPanel(x, y, angle, alpha)
-    local boxWidth = 150
-    local blackHeight = 70
-    local blueHeight = 80
+    local boxWidth = 105
+    local blackHeight = 49
+    local blueHeight = 56
 
     ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.05, 0.05, 0.05, alpha))
     ui.drawRect(vec2(x, y), vec2(x + boxWidth, y + blackHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
 
-    local ARROW_SIZE = 50
-    drawArrow(x + boxWidth * 0.5, y + blackHeight * 0.5, angle or 0, ARROW_SIZE, rgbm(1, 1, 1, alpha), 5)
+    local ARROW_SIZE = 35
+    drawArrow(x + boxWidth * 0.5, y + blackHeight * 0.5, angle or 0, ARROW_SIZE, rgbm(1, 1, 1, alpha), 4)
 
     -- Franja azul intermitente (el doble de rápido que la franja amarilla de safetyCar.lua)
     -- con el texto "CUIDADO" centrado adentro
@@ -452,7 +453,7 @@ local function drawBlueFlagPanel(x, y, angle, alpha)
     end
     ui.drawRect(vec2(x, barY), vec2(x + boxWidth, barY + blueHeight), rgbm(0.25, 0.25, 0.25, alpha), 0, 0, 2)
 
-    ui.pushFont(ui.Font.Title)
+    ui.pushFont(ui.Font.Small)
     local text = "CUIDADO"
     local textSize = ui.measureText(text)
     ui.setCursor(vec2(x + (boxWidth - textSize.x) * 0.5, barY + (blueHeight - textSize.y) * 0.5))
@@ -749,11 +750,12 @@ function script.drawUI()
 
     -- Panel cuadrado dedicado a la bandera azul (estilo SC + flecha), independiente del
     -- cartel de arriba -- no se muestra nada más junto con esto.
-    if blueFlagPanel.alpha > 0 and not shouldHideForDrag() then
-        local a = blueFlagPanel.alpha
+    if (blueFlagPanel.alpha > 0 or editingPanelId == BLUEFLAG_PREVIEW_ID) and not shouldHideForDrag() then
+        local a = editingPanelId == BLUEFLAG_PREVIEW_ID and 1 or blueFlagPanel.alpha
+        local angle = editingPanelId == BLUEFLAG_PREVIEW_ID and math.rad(45) or blueFlagPanel.angle
         local baseX = panelPositions.blueFlagPosX * screen.w
         local baseY = panelPositions.blueFlagPosY * screen.h
-        local boxWidth, boxHeight = 150, 150 -- tamaño fijo conocido (70+80), para el hitbox de arrastre
+        local boxWidth, boxHeight = 105, 105 -- tamaño fijo conocido (49+56), para el hitbox de arrastre
 
         if mp ~= nil then
             local overBox = mp.x >= baseX and mp.x <= baseX + boxWidth and mp.y >= baseY and mp.y <= baseY + boxHeight
@@ -776,7 +778,7 @@ function script.drawUI()
             end
         end
 
-        drawBlueFlagPanel(baseX, baseY, blueFlagPanel.angle, a)
+        drawBlueFlagPanel(baseX, baseY, angle, a)
     end
 end
 
