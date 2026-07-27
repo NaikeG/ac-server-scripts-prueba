@@ -101,13 +101,27 @@ end
 autoStartLightsEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Auto Start Lights")
 }, function(sender, message)
-    -- Sin este filtro, TODOS los clientes recibirían el aviso y cada uno dispararía su
-    -- propia secuencia con un horario aleatorio distinto, desincronizando todo -- solo
-    -- actúa el mismo cliente que mandó el aviso (el admin que desactivó Vuelta Previa),
-    -- igual que si hubiera apretado el botón manual él mismo.
-    if sender:driverName() ~= car:driverName() then return end
+    -- Diagnóstico protegido: si algo en el chequeo de "soy yo mismo" tira un error, antes
+    -- fallaba en silencio (sin loguear nada) -- ahora, pase lo que pase, se ve algo en el log.
+    local okSenderName, senderName = pcall(function() return sender:driverName() end)
+    local okMyName, myName = pcall(function() return car:driverName() end)
+    ac.log("[STARTLIGHTS] Auto Start Lights recibido -- sender=" .. tostring(okSenderName and senderName or ("ERROR: " .. tostring(senderName))) ..
+        " | yo=" .. tostring(okMyName and myName or ("ERROR: " .. tostring(myName))))
+
+    if not (okSenderName and okMyName) then
+        ac.log("[STARTLIGHTS] No se pudo comparar nombres, se aborta por seguridad")
+        return
+    end
+    if senderName ~= myName then
+        ac.log("[STARTLIGHTS] No soy yo quien mandó el aviso, se ignora")
+        return
+    end
+
     ac.log("[STARTLIGHTS] Disparo automático recibido (Vuelta Previa desactivada)")
-    doTriggerStart()
+    local okTrigger, errTrigger = pcall(doTriggerStart)
+    if not okTrigger then
+        ac.log("[STARTLIGHTS] ERROR al disparar automáticamente: " .. tostring(errTrigger))
+    end
 end,
 ac.SharedNamespace.ServerScript)
 
