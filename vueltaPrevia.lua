@@ -295,6 +295,7 @@ local function captureGridMap()
 end
 
 local wasRaceSession = false
+local lastSessionType = nil
 local ARROW_ACTIVATION_DISTANCE = 100 -- metros: el cartel entero recién aparece a esta distancia o menos
 local ARRIVAL_DISTANCE = 2 -- metros: una vez que estás así de cerca (o menos), se apaga el cartel, ya llegaste
 -- Aproximación de "sector 3" usando splinePosition (avance 0-1 en la pista, ya confirmado
@@ -362,6 +363,7 @@ ac.onOnlineWelcome(function(message, config)
     ARRIVAL_DISTANCE = config:get("FORMATION", "ARRIVAL_DISTANCE_METERS", 2)
     SECTOR3_SPLINE_THRESHOLD = config:get("FORMATION", "SECTOR3_SPLINE_THRESHOLD", 2 / 3)
     TOTAL_GRID_SLOTS = config:get("FORMATION", "TOTAL_GRID_SLOTS", 30)
+    PODIUM_VISIBILITY_DISTANCE = config:get("FORMATION", "PODIUM_VISIBILITY_DISTANCE_METERS", 100)
     BENGALAS_ENABLED = config:get("FORMATION", "BENGALAS_ENABLED", 1) == 1
     if config:get("FORMATION", "ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
@@ -391,7 +393,8 @@ end)
 -- ===== Números de podio (P1 dorado, P2 plateado, P3 bronce) siguiendo a cada auto =====
 -- Mucho más simple que las bengalas/fuegos artificiales: un solo número grande y legible
 -- arriba de cada uno de los 3 autos del podio, sin ningún efecto de partículas.
-local PODIUM_EFFECT_DURATION = 60 -- 1 minuto
+local PODIUM_EFFECT_DURATION = 120 -- 2 minutos
+local PODIUM_VISIBILITY_DISTANCE = 100 -- metros: el número solo se ve si estás a esta distancia o menos
 
 -- [1]=P1, [2]=P2, [3]=P3 -- cada uno con su propio timer e índice de auto (independientes)
 local podiumCars = {
@@ -450,6 +453,7 @@ function script.draw3D()
     -- color correspondiente (oro/plata/bronce) -- un solo render.debugText por número, sin
     -- líneas superpuestas ni efectos de partículas.
     local okPodium, errPodium = pcall(function()
+        local okMyPos, myPos = pcall(function() return car.position end)
         for pos = 1, 3 do
             local entry = podiumCars[pos]
             if entry.timer > 0 and entry.carIndex ~= nil then
@@ -457,8 +461,17 @@ function script.draw3D()
                 if okCar and thisCar then
                     local okPos2, carPos = pcall(function() return thisCar.position end)
                     if okPos2 then
-                        local numberY = carPos.y + 4.3
-                        render.debugText(vec3(carPos.x, numberY, carPos.z), tostring(pos), PODIUM_COLORS[pos], 6)
+                        local closeEnough = true
+                        if okMyPos then
+                            local dx = carPos.x - myPos.x
+                            local dz = carPos.z - myPos.z
+                            local dist = math.sqrt(dx * dx + dz * dz)
+                            closeEnough = dist <= PODIUM_VISIBILITY_DISTANCE
+                        end
+                        if closeEnough then
+                            local numberY = carPos.y + 4.3
+                            render.debugText(vec3(carPos.x, numberY, carPos.z), tostring(pos), PODIUM_COLORS[pos], 6)
+                        end
                     end
                 end
             end
@@ -520,6 +533,18 @@ end
 
 function script.update(dt)
     checkFinishLineCrossing(dt)
+
+    -- Cualquier cambio de tipo de sesión (no solo entrar a Carrera) corta los números de
+    -- podio al instante -- no tiene sentido seguir mostrando el podio de la carrera anterior
+    -- si ya se pasó a Clasificación u otra sesión nueva.
+    if lastSessionType ~= nil and sim.raceSessionType ~= lastSessionType then
+        for pos = 1, 3 do
+            podiumCars[pos].timer = 0
+            podiumCars[pos].carIndex = nil
+        end
+        ac.log("[FORMATION] Cambio de sesión detectado, números de podio cortados")
+    end
+    lastSessionType = sim.raceSessionType
 
     for pos = 1, 3 do
         if podiumCars[pos].timer > 0 then
