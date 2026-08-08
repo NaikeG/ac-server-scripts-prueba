@@ -210,8 +210,14 @@ local BLUEFLAG_DISTANCE_METERS = 60
 local BLUEFLAG_QUALY_SPEED_DIFF_KMH = 30
 local BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR = 1.15 -- además de la diferencia absoluta, tiene que ir un 15% más rápido en términos relativos -- filtra el caso de "los dos van rápido, en distintos puntos de sus respectivas vueltas"
 local QUALY_SUSTAIN_SECONDS = 1.5
+local BLUEFLAG_QUALIFY_ENABLED = false -- desactivada por pedido explícito: bandera azul solo en Carrera
 local qualySpeedDiffTimer = 0
-local RACE_LAP_SUSTAIN_SECONDS = 1.5 -- filtra el "1 de diferencia" transitorio justo al cruzar la línea de largada tras la Vuelta Previa
+local RACE_LAP_SUSTAIN_SECONDS = 6 -- mucho más alto que antes (1.5s) -- si seguía saltando
+-- casi todas las vueltas, sospecho que 1.5s no alcanzaba para filtrar el desfasaje
+-- transitorio justo al cruzar la línea cada vuelta (los lapCount de dos autos pueden quedar
+-- momentáneamente desalineados ahí, sin ser una vuelta de diferencia real). Una diferencia
+-- real se sostiene mucho más que unos segundos, así que esto no debería afectar los casos
+-- genuinos, solo filtrar mejor los falsos positivos repetidos.
 local raceLapDiffTimer = 0
 local lastDistanceToCar = {} -- [carIndex] = última distancia conocida a ese auto, para exigir que se esté achicando de verdad
 
@@ -223,12 +229,12 @@ local function checkBlueFlagApprox(dt)
     end
 
     local isRaceSession = (sim.raceSessionType == ac.SessionType.Race)
-    local isQualifySession = (sim.raceSessionType == ac.SessionType.Qualify)
+    local isQualifySession = (sim.raceSessionType == ac.SessionType.Qualify) and BLUEFLAG_QUALIFY_ENABLED
 
     if not isRaceSession and not isQualifySession then
         qualySpeedDiffTimer = 0
         raceLapDiffTimer = 0
-        return false, nil -- Práctica (o cualquier otra sesión que no sea Carrera/Clasificación): nunca
+        return false, nil -- Práctica, Clasificación (desactivada), o cualquier otra sesión que no sea Carrera: nunca
     end
 
     if isRaceSession and isFormationSuppressed() then
@@ -267,6 +273,21 @@ local function checkBlueFlagApprox(dt)
                         if isRaceSession then
                             local okLap, otherLap = pcall(function() return otherCar.lapCount end)
                             qualifies = okLap and otherLap > car.lapCount
+
+                            -- Zona de exclusión cerca de la línea de largada/meta: si CUALQUIERA
+                            -- de los dos (yo o el otro auto) está muy cerca del cruce (spline
+                            -- position cerca de 0 o de 1), no cuenta -- justo ahí el lapCount
+                            -- puede quedar momentáneamente desalineado entre dos autos que van
+                            -- juntos, sin que sea una vuelta de diferencia real.
+                            if qualifies then
+                                local LINE_EXCLUSION_MARGIN = 0.03 -- ~3% del giro de cada lado de la línea
+                                local okMySpline, mySpline = pcall(function() return car.splinePosition end)
+                                local okOtherSpline, otherSpline = pcall(function() return otherCar.splinePosition end)
+                                local nearLine = function(s) return s ~= nil and (s < LINE_EXCLUSION_MARGIN or s > 1 - LINE_EXCLUSION_MARGIN) end
+                                if (okMySpline and nearLine(mySpline)) or (okOtherSpline and nearLine(otherSpline)) then
+                                    qualifies = false
+                                end
+                            end
                         else
                             -- Clasificación: diferencia de velocidad (absoluta Y relativa, para filtrar
                             -- el caso de "los dos van rápido, en distintos puntos de sus vueltas"),
@@ -629,6 +650,7 @@ ac.onOnlineWelcome(function(message, config)
     soundVolumeMultiplier = config:get("PENALTIES", "SOUND_VOLUME_MULTIPLIER", 2.5)
     GEARBOX_LOCK_SECONDS = config:get("PENALTIES", "GEARBOX_LOCK_SECONDS", 5)
     BLUEFLAG_DISTANCE_METERS = config:get("PENALTIES", "BLUEFLAG_DISTANCE_METERS", 60)
+    BLUEFLAG_QUALIFY_ENABLED = config:get("PENALTIES", "BLUEFLAG_QUALIFY_ENABLED", 0) == 1
     BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
     BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR = config:get("PENALTIES", "BLUEFLAG_QUALY_RELATIVE_SPEED_FACTOR", 1.15)
     INCIDENT_SPEED_THRESHOLD_KMH = config:get("PENALTIES", "INCIDENT_SPEED_THRESHOLD_KMH", 25)
