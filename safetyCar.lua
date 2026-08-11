@@ -25,7 +25,16 @@ local state = {
 local restrictorValue = 80
 local ballastValue = 150 -- kg extra que se le suman al auto mientras el SC está afuera
 
+-- Excepción para el auto que hace de Safety Car: cada cliente sabe SOLO si "yo mismo" me
+-- marqué como el conductor del auto de seguridad (no hace falta saber quién es en los demás
+-- clientes) -- si es así, no me aplico ni restrictor ni lastre a mí mismo.
+local amISafetyCarDriver = false
+
 local function applyRestrictor(value)
+    if amISafetyCarDriver then
+        ac.log("[SAFETYCAR] Restrictor NO aplicado -- soy el auto de Safety Car")
+        return true
+    end
     local ok, err = pcall(function() physics.setCarRestrictor(0, value) end)
     if ok then
         local okRead, currentVal = pcall(function() return car.restrictor end)
@@ -38,6 +47,10 @@ local function applyRestrictor(value)
 end
 
 local function applyBallast(value)
+    if amISafetyCarDriver then
+        ac.log("[SAFETYCAR] Lastre NO aplicado -- soy el auto de Safety Car")
+        return true
+    end
     local ok, err = pcall(function() physics.setCarBallast(0, value) end)
     if ok then
         local okRead, currentVal = pcall(function() return car.ballast end)
@@ -50,10 +63,12 @@ local function applyBallast(value)
 end
 
 local function applyRestrictorQuiet(value)
+    if amISafetyCarDriver then return end
     pcall(function() physics.setCarRestrictor(0, value) end)
 end
 
 local function applyBallastQuiet(value)
+    if amISafetyCarDriver then return end
     pcall(function() physics.setCarBallast(0, value) end)
 end
 
@@ -98,6 +113,30 @@ safetyCarEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
+-- Marca (o desmarca) al auto que efectivamente maneja de Safety Car, para eximirlo del
+-- restrictor/lastre. Se dispara desde el propio cliente de quien lo maneja -- cada uno
+-- recibe el aviso y chequea si el remitente es uno mismo (mismo patrón que usamos en todo
+-- el proyecto para identificarse sin depender del contenido del mensaje).
+isSafetyCarDriverEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Is Safety Car Driver"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    local okSenderName, senderName = pcall(function() return sender:driverName() end)
+    local okMyName, myName = pcall(function() return car:driverName() end)
+    if okSenderName and okMyName and senderName == myName then
+        amISafetyCarDriver = message.enabled
+        ac.log("[SAFETYCAR] Yo soy el auto de Safety Car: " .. tostring(amISafetyCarDriver))
+        -- Si ya estaba activo el Safety Car cuando me marco/desmarco, reaplica de inmediato
+        if state.enabled then
+            onSafetyCarStateChanged()
+        else
+            applyRestrictor(0)
+            applyBallast(0)
+        end
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
 ac.onResolutionChange(function()
     screen.w = ac.getSim().windowWidth
     screen.h = ac.getSim().windowHeight
@@ -138,6 +177,28 @@ ac.onOnlineWelcome(function(message, config)
             onSafetyCarStateChanged()
             safetyCarEvent({ enabled = state.enabled })
             ac.log("[SAFETYCAR] Estado: " .. tostring(state.enabled))
+        end,
+        adminFlag
+    )
+
+    -- Botón aparte para marcarse como el auto que efectivamente maneja de Safety Car (queda
+    -- exento del restrictor/lastre). Admin-only también, para que no se lo pueda marcar
+    -- cualquiera y esquivar la sanción.
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🚗 Soy el Safety Car",
+        function() return true end,
+        nil,
+        function()
+            amISafetyCarDriver = not amISafetyCarDriver
+            isSafetyCarDriverEvent({ enabled = amISafetyCarDriver })
+            if state.enabled then
+                onSafetyCarStateChanged()
+            else
+                applyRestrictor(0)
+                applyBallast(0)
+            end
+            ac.log("[SAFETYCAR] Marcado como auto de Safety Car (yo mismo): " .. tostring(amISafetyCarDriver))
         end,
         adminFlag
     )
