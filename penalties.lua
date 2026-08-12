@@ -1,6 +1,21 @@
 local sim = ac.getSim()
 local car = ac.getCar(0)
 
+-- Marca compartida con safetyCar.lua (mismo evento "Is Safety Car Driver"): si SOY yo quien
+-- maneja el auto de Safety Car, quedo exento también del aviso/sanción de adelantamiento
+-- bajo Safety Car -- no tendría sentido sancionarme a mí mismo por "adelantar" cuando soy
+-- justamente el que va liderando el pelotón bajo bandera amarilla.
+local amISafetyCarDriver = false
+isSafetyCarDriverEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Is Safety Car Driver"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    amISafetyCarDriver = message.enabled
+    ac.log("[PENALTIES] Yo soy el auto de Safety Car: " .. tostring(amISafetyCarDriver))
+end,
+ac.SharedNamespace.ServerScript)
+
 -- ===== Estado de Vuelta Previa (mismo evento "Formation Lap" que usa vueltaPrevia.lua) =====
 -- Durante la Vuelta Previa ya se está técnicamente en sesión de Carrera, y como cada piloto
 -- llega a su casillero de grilla en un momento distinto, pueden aparecer diferencias de
@@ -869,7 +884,7 @@ function script.update(dt)
     -- sancionar. CLAVE: si tras la sanción todavía no devolvió la posición, se lo vuelve a
     -- avisar y sancionar de nuevo, las veces que hagan falta -- no alcanza con "pagar una vez"
     -- y quedarse con el lugar robado.
-    if scActive and positionField ~= nil and not isCarInPit() then
+    if scActive and positionField ~= nil and not isCarInPit() and not amISafetyCarDriver then
         local currentPos = getRacePosition()
 
         if myGearboxLockEndTime ~= nil then
