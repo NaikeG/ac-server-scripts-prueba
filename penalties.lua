@@ -589,6 +589,7 @@ local lastKnownPosition = nil
 -- Estado del aviso de "devolver la posición" antes de sancionar
 local OVERTAKE_WARNING_SECONDS = 15
 local GEARBOX_LOCK_SECONDS = 5 -- duración del bloqueo de caja, igual mecanismo que Largada en Movimiento
+local OVERTAKE_PENALTY_ENABLED = false -- desactivada por pedido explícito: el restrictor ya alcanza
 local overtakeWarningActive = false
 local overtakeWarningTimer = 0
 local positionBeforeOvertake = nil
@@ -664,6 +665,7 @@ ac.onOnlineWelcome(function(message, config)
     blueFlagSoundURL = config:get("PENALTIES", "BLUEFLAG_SOUND_URL", "")
     soundVolumeMultiplier = config:get("PENALTIES", "SOUND_VOLUME_MULTIPLIER", 2.5)
     GEARBOX_LOCK_SECONDS = config:get("PENALTIES", "GEARBOX_LOCK_SECONDS", 5)
+    OVERTAKE_PENALTY_ENABLED = config:get("PENALTIES", "OVERTAKE_PENALTY_ENABLED", 0) == 1
     BLUEFLAG_DISTANCE_METERS = config:get("PENALTIES", "BLUEFLAG_DISTANCE_METERS", 60)
     BLUEFLAG_QUALIFY_ENABLED = config:get("PENALTIES", "BLUEFLAG_QUALIFY_ENABLED", 0) == 1
     BLUEFLAG_QUALY_SPEED_DIFF_KMH = config:get("PENALTIES", "BLUEFLAG_QUALY_SPEED_DIFF_KMH", 30)
@@ -884,7 +886,10 @@ function script.update(dt)
     -- sancionar. CLAVE: si tras la sanción todavía no devolvió la posición, se lo vuelve a
     -- avisar y sancionar de nuevo, las veces que hagan falta -- no alcanza con "pagar una vez"
     -- y quedarse con el lugar robado.
-    if scActive and positionField ~= nil and not isCarInPit() and not amISafetyCarDriver then
+    -- Desactivado por pedido explícito: con el restrictor de safetyCar.lua ya alcanza como
+    -- freno, no hace falta la sanción de caja bloqueada encima. Queda como interruptor (no
+    -- borrado) por si más adelante se quiere reactivar sin tener que reconstruirlo.
+    if OVERTAKE_PENALTY_ENABLED and scActive and positionField ~= nil and not isCarInPit() and not amISafetyCarDriver then
         local currentPos = getRacePosition()
 
         if myGearboxLockEndTime ~= nil then
