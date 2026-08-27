@@ -21,8 +21,9 @@ local PANEL_NAMES = {
     [9] = "Largada en Movimiento",
     [10] = "Navegación a tu Puesto de Grilla",
     [11] = "Aviso Bandera Azul",
+    [12] = "Bandera Verde",
 }
-local PANEL_COUNT = 11
+local PANEL_COUNT = 12
 
 local editingPanelId = 0 -- 0 = apagado, 1-9 = mostrando ese cartel específico
 local adminFlag = ui.OnlineExtraFlags.Admin
