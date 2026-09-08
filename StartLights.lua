@@ -366,13 +366,13 @@ triggerStart = ac.OnlineEvent({
 
     startTime = message.startTime
     delayTime = message.delayTime
-    if sim.currentSessionTime < maxStartArmWindow then
-        started = false
-    else
-        ac.log("[STARTLIGHTS] Falsa largada NO armada: la sesión ya lleva " ..
-            math.floor(sim.currentSessionTime / 1000) .. "s (fuera de la ventana de seguridad de " ..
-            math.floor(maxStartArmWindow / 1000) .. "s). Las luces igual se muestran, pero sin riesgo de teletransporte.")
-    end
+    -- Este evento SIEMPRE es un disparo deliberado (botón manual, o el automático al
+    -- desactivar Vuelta Previa) -- se arma sí o sí, sin la ventana de "maxStartArmWindow"
+    -- (esa ventana es para el arranque NATIVO automático de overrideStart(), pensada para
+    -- evitar un rearmado accidental tarde en la sesión -- acá no aplica, porque si este
+    -- evento se disparó es porque alguien lo pidió a propósito, sin importar cuánto lleva
+    -- la sesión corriendo).
+    started = false
 
     if not isDuplicate then
         greenSoundPlayed = false
