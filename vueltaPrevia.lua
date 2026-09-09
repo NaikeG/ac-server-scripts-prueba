@@ -532,6 +532,12 @@ function script.draw3D()
 end
 
 function script.update(dt)
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
+    -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
+    -- cambiar de cámara a otro auto).
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
     checkFinishLineCrossing(dt)
 
     -- Cualquier cambio de tipo de sesión (no solo entrar a Carrera) corta los números de
