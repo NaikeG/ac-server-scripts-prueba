@@ -205,6 +205,12 @@ ac.onOnlineWelcome(function(message, config)
 end)
 
 function script.update(dt)
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
+    -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
+    -- cambiar de cámara a otro auto).
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
     local speed = 3.5
     if state.enabled or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + dt * speed, 1)
