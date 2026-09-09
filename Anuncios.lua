@@ -858,6 +858,14 @@ function script.drawUI()
 end
 
 function script.update(dt)
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros (no solo cuando dispara el
+    -- evento de cambio de resolución) -- sospechamos que cambiar de cámara a otro auto y
+    -- volver puede disparar ese evento con un valor transitorio/incorrecto que se queda
+    -- pegado, dejando todos los carteles mal posicionados (fuera de pantalla) sin ningún
+    -- error visible. Leer esto en vivo cada cuadro es a prueba de eso.
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
     -- Vigila la validez de la vuelta en curso en TODOS los frames (ver nota arriba de
     -- currentLapHadInvalidMoment sobre por qué no alcanza con chequearlo al completar la vuelta)
     if not isLapValid() then
