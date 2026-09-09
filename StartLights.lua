@@ -273,6 +273,12 @@ end)
 ac.debug("!version", "startLights v0.9-verde")
 
 function script.update(dt)
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
+    -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
+    -- cambiar de cámara a otro auto).
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
     for i = #resendQueue, 1, -1 do
         local item = resendQueue[i]
         item.timer = item.timer - dt
