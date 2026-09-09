@@ -826,6 +826,12 @@ local wasUnderBlueFlag = false
 local blueFlagTrackedCarIndex = nil -- para poder seguir en vivo al auto que disparó la bandera azul
 
 function script.update(dt)
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
+    -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
+    -- cambiar de cámara a otro auto).
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
     if graceTimer > 0 then
         graceTimer = math.max(graceTimer - dt, 0)
     end
