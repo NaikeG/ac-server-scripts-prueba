@@ -409,6 +409,24 @@ local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
 end
 
+-- Cartel de límite de velocidad "80", estilo cartel de tránsito real (círculo rojo, centro
+-- claro, número negro grueso) -- se muestra desde que terminan las intermitentes amarillas
+-- (arranca la secuencia de rojos) hasta que se da el verde, como recordatorio de mantener el
+-- ritmo controlado mientras se preparan para largar.
+local function drawSpeedLimitSign(centerX, centerY, radius)
+    ui.drawCircleFilled(vec2(centerX, centerY), radius, alphaColor(0.85, 0.1, 0.08, 1), 48)
+    ui.drawCircleFilled(vec2(centerX, centerY), radius * 0.78, alphaColor(0.96, 0.96, 0.94, 1), 48)
+
+    ui.pushFont(ui.Font.Huge)
+    local text = "80"
+    local textSize = ui.measureText(text)
+    ui.setCursor(vec2(centerX - textSize.x * 0.5, centerY - textSize.y * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(0.05, 0.05, 0.05, 1))
+    ui.text(text)
+    ui.popStyleColor()
+    ui.popFont()
+end
+
 local function drawGantry(centerX, y)
     local radius = 26
     local spacing = radius * 2.4
@@ -629,5 +647,16 @@ function script.drawUI()
     else
         -- Durante la secuencia (rojo -> verde): se oculta el cartel, queda solo el semáforo en su misma posición.
         drawGantry(centerX, gantryY)
+
+        -- El cartel de 80 se muestra desde que arranca la secuencia (terminaron las
+        -- intermitentes amarillas) hasta que se da el verde -- desaparece apenas
+        -- greenForced pasa a true, sea porque lo detectó este cliente o porque le llegó el
+        -- aviso de otro.
+        if phase == "sequence" and not greenForced then
+            local signRadius = 55
+            local signX = centerX + blockWidth * 0.5 + signRadius + 24
+            local signY = gantryY + (blockHeight * 0.5)
+            drawSpeedLimitSign(signX, signY, signRadius)
+        end
     end
 end
