@@ -78,6 +78,11 @@ local beepSound = nil
 local soundVolumeMultiplier = 2.5
 local speedSignURL = ""
 
+-- Sonido dedicado para el momento del verde -- así, aunque el cartel/semáforo no llegue a
+-- verse por el bug conocido de CSP/apps, el piloto se entera igual por el audio.
+local greenSoundURL = ""
+local greenSound = nil
+
 local title = "LARGADA EN MOVIMIENTO"
 
 local lightCount = 6
@@ -125,6 +130,7 @@ greenNowEvent = ac.OnlineEvent({
     if not greenForced then
         greenForced = true
         greenForcedAt = sim.currentSessionTime
+        playSound(greenSound, "verde (aviso de otro cliente)")
     end
 end,
 ac.SharedNamespace.ServerScript)
@@ -196,6 +202,21 @@ ac.onOnlineWelcome(function(message, config)
             ac.log("[ROLLINGSTART] Beep sound cargado OK: " .. beepURL)
         else
             ac.log("[ROLLINGSTART] ERROR cargando beep sound (" .. beepURL .. "): " .. tostring(result))
+        end
+    end
+
+    -- Sonido al darse el verde -- faltaba cargarlo (las variables y la reproducción ya
+    -- estaban armadas, pero nunca se leía la URL ni se inicializaba el reproductor, así que
+    -- nunca sonaba). Así, aunque el cartel no llegue a verse por el bug conocido de
+    -- CSP/apps, el piloto se entera igual por el audio.
+    greenSoundURL = config:get("ROLLINGSTART", "GREEN_SOUND_URL", "")
+    if greenSoundURL ~= "" then
+        local okGreen, resultGreen = pcall(function() return ui.MediaPlayer(greenSoundURL) end)
+        if okGreen then
+            greenSound = resultGreen
+            ac.log("[ROLLINGSTART] Green sound cargado OK: " .. greenSoundURL)
+        else
+            ac.log("[ROLLINGSTART] ERROR cargando green sound (" .. greenSoundURL .. "): " .. tostring(resultGreen))
         end
     end
 
@@ -300,6 +321,17 @@ local function playBeep()
     end
 end
 
+local function playGreenSound()
+    if not greenSound then return end
+    local ok, err = pcall(function()
+        greenSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        greenSound:play()
+    end)
+    if not ok then
+        ac.log("[ROLLINGSTART] ERROR reproduciendo sonido de verde: " .. tostring(err))
+    end
+end
+
 function script.update(dt)
     -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
     -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
@@ -337,6 +369,7 @@ function script.update(dt)
         if not greenForced and sim.currentSessionTime >= startTime + delayTime then
             greenForced = true
             greenForcedAt = sim.currentSessionTime
+            playSound(greenSound, "verde (detectado localmente)")
             greenNowEvent({})
         end
 
