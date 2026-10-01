@@ -518,8 +518,8 @@ function script.update(dt)
                 local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
                 if isOn and not prevLightsOn[i] then
                     playBeep()
-                    if i == 3 then
-                        -- Sonido aparte, una sola vez, justo cuando se enciende la 3ra roja
+                    if i == 5 then
+                        -- Sonido aparte, una sola vez, justo cuando se enciende la 5ta roja
                         playThirdRedSound()
                     end
                 end
