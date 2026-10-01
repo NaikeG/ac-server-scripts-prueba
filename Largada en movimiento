@@ -72,6 +72,83 @@ local restrictorTimer = 0
 local overSpeedFlag = false
 local greenCheckDone = false -- asegura que el chequeo de velocidad al dar el verde se haga una sola vez por secuencia
 
+-- ===== Ranking de tiempo de reacción al apagar el pit limiter tras el verde =====
+-- Mide cuánto tarda CADA piloto en desactivar el limitador de pits después de que se da la
+-- largada, y arma una tabla con todos los que reportaron. Se guarda localmente (ac.storage)
+-- para poder revisarla después de la carrera aunque ya no esté el semáforo en pantalla, o
+-- incluso después de reconectar.
+local pitLimiterArmed = false       -- true mientras se espera que ESTE piloto apague el limitador
+local pitLimiterReported = false    -- evita contar dos veces la misma secuencia
+local pitLimiterWasOn = false       -- confirma que el limitador estuvo encendido antes de apagarse
+local pitLimiterStartTime = 0
+local prevGreenForcedForPitLimiter = false
+
+local pitLimiterResults = {}        -- array ordenado: { {name=.., ms=..}, ... }
+local pitLimiterIndexByName = {}    -- nombre de piloto -> posición en pitLimiterResults
+
+-- Prefijo propio para que esta tabla no comparta claves con posCfg (la posición del cartel
+-- principal), que se guarda con otra llamada a ac.storage más abajo en este archivo.
+local pitLimiterStorage = ac.storage({ resultsJSON = "" }, "pitLimiterResults")
+
+local function savePitLimiterResults()
+    pcall(function()
+        pitLimiterStorage.resultsJSON = stringify(pitLimiterResults, true)
+    end)
+end
+
+local function loadPitLimiterResults()
+    pcall(function()
+        if pitLimiterStorage.resultsJSON ~= "" then
+            local loaded = stringify.tryParse(pitLimiterStorage.resultsJSON, nil, nil)
+            if type(loaded) == "table" then
+                pitLimiterResults = loaded
+                pitLimiterIndexByName = {}
+                for i, entry in ipairs(pitLimiterResults) do
+                    if entry and entry.name then
+                        pitLimiterIndexByName[entry.name] = i
+                    end
+                end
+            end
+        end
+    end)
+end
+loadPitLimiterResults()
+
+-- No hay cartel en pantalla para esto a propósito -- el pedido fue que quede un REGISTRO
+-- guardado (acá, en el log de CSP y en ac.storage), no una ventana visible. Para revisarlo
+-- después de la carrera: Documents/Assetto Corsa/logs/custom_shaders_patch.log, buscando
+-- "[ROLLINGSTART] Ranking".
+local function dumpPitLimiterRanking()
+    pcall(function()
+        ac.log("[ROLLINGSTART] ===== Ranking tiempo de reacción al pit limiter =====")
+        if #pitLimiterResults == 0 then
+            ac.log("[ROLLINGSTART]   (todavía sin datos)")
+        end
+        for i, entry in ipairs(pitLimiterResults) do
+            ac.log(string.format("[ROLLINGSTART]   %d. %s - %.2f s", i, tostring(entry.name), entry.ms / 1000))
+        end
+    end)
+end
+
+local function registerPitLimiterResult(name, ms)
+    if name == nil then return end
+    ms = math.max(0, math.floor((tonumber(ms) or 0) + 0.5))
+    local idx = pitLimiterIndexByName[name]
+    if idx then
+        pitLimiterResults[idx].ms = ms
+    else
+        table.insert(pitLimiterResults, { name = name, ms = ms })
+    end
+    table.sort(pitLimiterResults, function(a, b) return a.ms < b.ms end)
+    pitLimiterIndexByName = {}
+    for i, entry in ipairs(pitLimiterResults) do
+        pitLimiterIndexByName[entry.name] = i
+    end
+    savePitLimiterResults()
+    ac.log(string.format("[ROLLINGSTART] %s reaccionó al pit limiter en %.2f s", tostring(name), ms / 1000))
+    dumpPitLimiterRanking()
+end
+
 -- Sonido
 local beepURL = ""
 local beepSound = nil
@@ -160,6 +237,15 @@ rollingStartEvent = ac.OnlineEvent({
             greenCheckDone = false
             greenForced = false
             resetLightEdges()
+
+            -- Nueva largada -> se limpia el ranking de la anterior, así la tabla que se ve
+            -- "después de la carrera" es siempre la de la carrera que se acaba de correr.
+            pitLimiterArmed = false
+            pitLimiterReported = false
+            pitLimiterWasOn = false
+            pitLimiterResults = {}
+            pitLimiterIndexByName = {}
+            savePitLimiterResults()
         end
     else
         phase = "off"
@@ -167,6 +253,20 @@ rollingStartEvent = ac.OnlineEvent({
         restrictorTimer = 0
     end
     ac.log("[ROLLINGSTART] " .. sender:driverName() .. " -> fase: " .. phase .. (isDuplicate and " (duplicado, ignorado)" or ""))
+end,
+ac.SharedNamespace.ServerScript)
+
+-- Cada cliente, al detectar que APAGÓ su propio limitador, transmite su tiempo de reacción.
+-- Todos (incluido el que lo manda, por el eco del propio evento) lo guardan en su tabla local,
+-- así cualquiera puede abrir el cartel de ranking y ver a todos los que reportaron.
+pitLimiterReactionEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Pit Limiter Reaction"),
+    ms = ac.StructItem.float()
+}, function(sender, message)
+    local okName, name = pcall(function() return sender:driverName() end)
+    if okName then
+        registerPitLimiterResult(name, message.ms)
+    end
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -433,6 +533,31 @@ function script.update(dt)
                     restrictorTimer = 0
                     applyRestrictor(0)
                 end
+            end
+        end
+    end
+
+    -- ===== Ranking de reacción al pit limiter: se calcula aparte de "phase", porque "phase"
+    -- vuelve a "off" a los pocos segundos del verde (greenHoldTime) y acá hace falta seguir
+    -- esperando a que el piloto apague el limitador más allá de ese momento. =====
+    if greenForced and not prevGreenForcedForPitLimiter then
+        pitLimiterArmed = true
+        pitLimiterReported = false
+        pitLimiterStartTime = greenForcedAt
+        local okInitial, initialOn = pcall(function() return car.manualPitsSpeedLimiterEnabled end)
+        pitLimiterWasOn = okInitial and initialOn or false
+    end
+    prevGreenForcedForPitLimiter = greenForced
+
+    if pitLimiterArmed and not pitLimiterReported then
+        local okLimiter, limiterOn = pcall(function() return car.manualPitsSpeedLimiterEnabled end)
+        if okLimiter then
+            if limiterOn then
+                pitLimiterWasOn = true
+            elseif pitLimiterWasOn then
+                pitLimiterReported = true
+                local reactionMs = math.max(0, sim.currentSessionTime - pitLimiterStartTime)
+                pitLimiterReactionEvent({ ms = reactionMs })
             end
         end
     end
