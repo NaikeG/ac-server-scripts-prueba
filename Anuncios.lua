@@ -3,6 +3,24 @@ car = ac.getCar(0)
 
 local pendingChats = {}
 
+-- Sonido para el cartel de "Última Vuelta" -- se dispara una sola vez por carrera, justo
+-- cuando aparece el cartel (mismo mecanismo de carga que el resto de los scripts del
+-- proyecto: URL en Extra Options, cargada acá, reproducida con MediaPlayer).
+local lastLapSoundURL = ""
+local lastLapSound = nil
+local soundVolumeMultiplier = 2.5
+
+local function playLastLapSound()
+    if not lastLapSound then return end
+    local ok, err = pcall(function()
+        lastLapSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        lastLapSound:play()
+    end)
+    if not ok then
+        ac.log("[ANNOUNCE] ERROR reproduciendo sonido de última vuelta: " .. tostring(err))
+    end
+end
+
 -- ===== Modo de edición: en vez de mostrar TODOS los carteles a la vez (se superponían y
 -- tapaban unos a otros), se muestra UNO SOLO por vez, elegido con botones de "Siguiente" /
 -- "Anterior" en el menú de admin. 0 = modo apagado. Se comparte el mismo evento con los otros
@@ -317,6 +335,9 @@ lastLapEvent = ac.OnlineEvent({
 }, function(sender, message)
     if raceLastLapAnnounced then return end
     raceLastLapAnnounced = true
+    -- Suena en TODOS los clientes (incluido el líder que lo disparó, por el eco del propio
+    -- evento) -- una sola vez por carrera, justo cuando aparece el cartel.
+    playLastLapSound()
 end,
 ac.SharedNamespace.ServerScript)
 
@@ -421,6 +442,18 @@ ac.onOnlineWelcome(function(message, config)
 
     if config:get("ANNOUNCE", "PANEL_EDIT_ADMIN_ONLY", 1) == 0 then
         adminFlag = ui.OnlineExtraFlags.None
+    end
+
+    soundVolumeMultiplier = config:get("ANNOUNCE", "SOUND_VOLUME_MULTIPLIER", 2.5)
+    lastLapSoundURL = config:get("ANNOUNCE", "LAST_LAP_SOUND_URL", "")
+    if lastLapSoundURL ~= "" then
+        local okLastLap, resultLastLap = pcall(function() return ui.MediaPlayer(lastLapSoundURL) end)
+        if okLastLap then
+            lastLapSound = resultLastLap
+            ac.log("[ANNOUNCE] Last lap sound cargado OK: " .. lastLapSoundURL)
+        else
+            ac.log("[ANNOUNCE] ERROR cargando last lap sound (" .. lastLapSoundURL .. "): " .. tostring(resultLastLap))
+        end
     end
 
     ui.registerOnlineExtra(
