@@ -160,6 +160,18 @@ local speedSignURL = ""
 local greenSoundURL = ""
 local greenSound = nil
 
+-- Sonido dedicado para cuando se enciende la TERCERA luz roja -- distinto del beep de cada
+-- luz, se dispara una sola vez por secuencia (mismo mecanismo de flanco que ya usa el beep).
+local thirdRedSoundURL = ""
+local thirdRedSound = nil
+
+-- Declaración adelantada: las funciones que realmente reproducen cada sonido se definen más
+-- abajo en el archivo, pero "greenNowEvent" (al que le sigue, unas líneas más abajo) necesita
+-- poder llamarlas. Sin esto, Lua no las ve como upvalue y la llamada busca una variable
+-- GLOBAL con ese nombre -- que no existe -- y revienta en silencio apenas llega el evento.
+-- (Así se había colado el bug de "playSound(greenSound, ...)": esa función nunca existió.)
+local playBeep, playGreenSound, playThirdRedSound
+
 local title = "LARGADA EN MOVIMIENTO"
 
 local lightCount = 6
@@ -207,7 +219,10 @@ greenNowEvent = ac.OnlineEvent({
     if not greenForced then
         greenForced = true
         greenForcedAt = sim.currentSessionTime
-        playSound(greenSound, "verde (aviso de otro cliente)")
+        -- Nota: acá había un llamado a una función "playSound(greenSound, ...)" que no existe
+        -- en este archivo (la real es "playGreenSound()", sin argumentos) -- nunca sonaba el
+        -- verde cuando llegaba avisado por otro cliente. Corregido de paso.
+        playGreenSound()
     end
 end,
 ac.SharedNamespace.ServerScript)
@@ -320,6 +335,19 @@ ac.onOnlineWelcome(function(message, config)
         end
     end
 
+    -- Sonido dedicado para cuando se enciende la 3ra luz roja (aviso de "ya casi" antes del
+    -- verde). Se agrega aparte del beep normal de cada luz, no lo reemplaza.
+    thirdRedSoundURL = config:get("ROLLINGSTART", "THIRD_RED_SOUND_URL", "")
+    if thirdRedSoundURL ~= "" then
+        local okThirdRed, resultThirdRed = pcall(function() return ui.MediaPlayer(thirdRedSoundURL) end)
+        if okThirdRed then
+            thirdRedSound = resultThirdRed
+            ac.log("[ROLLINGSTART] Third red sound cargado OK: " .. thirdRedSoundURL)
+        else
+            ac.log("[ROLLINGSTART] ERROR cargando third red sound (" .. thirdRedSoundURL .. "): " .. tostring(resultThirdRed))
+        end
+    end
+
 local function startSequence()
     local st = sim.currentSessionTime + seqDuration
     local dt = math.random(lightsOutMin, lightsOutMax)
@@ -410,7 +438,7 @@ local function applyRestrictor(value)
     return false
 end
 
-local function playBeep()
+function playBeep()
     if not beepSound then return end
     local ok, err = pcall(function()
         beepSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
@@ -421,7 +449,7 @@ local function playBeep()
     end
 end
 
-local function playGreenSound()
+function playGreenSound()
     if not greenSound then return end
     local ok, err = pcall(function()
         greenSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
@@ -429,6 +457,17 @@ local function playGreenSound()
     end)
     if not ok then
         ac.log("[ROLLINGSTART] ERROR reproduciendo sonido de verde: " .. tostring(err))
+    end
+end
+
+function playThirdRedSound()
+    if not thirdRedSound then return end
+    local ok, err = pcall(function()
+        thirdRedSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        thirdRedSound:play()
+    end)
+    if not ok then
+        ac.log("[ROLLINGSTART] ERROR reproduciendo sonido de 3ra luz roja: " .. tostring(err))
     end
 end
 
@@ -469,7 +508,7 @@ function script.update(dt)
         if not greenForced and sim.currentSessionTime >= startTime + delayTime then
             greenForced = true
             greenForcedAt = sim.currentSessionTime
-            playSound(greenSound, "verde (detectado localmente)")
+            playGreenSound()
             greenNowEvent({})
         end
 
@@ -479,6 +518,12 @@ function script.update(dt)
                 local isOn = sim.currentSessionTime > startTime - seqDuration + seqStartTime + ((seqDuration - seqStartTime) / lightCount) * i
                 if isOn and not prevLightsOn[i] then
                     playBeep()
+                    if i == lightCount then
+                        -- Sonido aparte, una sola vez, justo cuando se enciende la ÚLTIMA roja
+                        -- (lightCount, no un número fijo, para que siga siendo "la última" si
+                        -- en algún momento se cambia la cantidad de luces del semáforo)
+                        playThirdRedSound()
+                    end
                 end
                 lightsOn[i] = isOn
             end
