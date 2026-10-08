@@ -1151,15 +1151,22 @@ local function healthReport()
     local lines, toRepair, checked = {}, {}, 0
     for _, c in ac.iterateCars() do
         local okName, name = pcall(function() return c:driverName() end)
+        -- ac.iterateCars() incluye TODOS los slots del servidor (también los vacíos/desconectados)
+        local okConn, connected = pcall(function() return c.isConnected end)
+        if okConn and not connected then goto continue_car end
         if okName and name and name ~= "" then
             checked = checked + 1
             local r = s.replies[name] or {}
             local isMe = false
             pcall(function() isMe = (name == car:driverName()) end)
             if isMe then
-                -- El admin que pidió el chequeo se omite: si este script corre, tiene scripts, y
-                -- no se puede asumir que CSP le devuelva el eco de sus propias respuestas.
-                goto continue_car
+                -- El admin también se chequea. Este script (Anuncios) se evalúa en directo, sin
+                -- depender del eco; los otros 6 dependen de que CSP devuelva el eco de las
+                -- respuestas propias (si no llega, figuran "sin respuesta").
+                r[1] = { visualOk = health.ok(), welcome = health.welcome }
+                if not health.ok() then
+                    health.repair("autochequeo del admin")
+                end
             end
             local missing, notDrawing, noConfig = {}, {}, {}
             for id = 1, 7 do
