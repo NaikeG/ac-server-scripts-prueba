@@ -1184,8 +1184,22 @@ local function healthReport()
                     if not r[id].visualOk then table.insert(notDrawing, HEALTH_NAMES[id]) end
                 end
             end
+            if isMe then
+                -- El eco de las respuestas propias no es confiable en CSP: lo que no contestó no se
+                -- cuenta como falla (solo cuentan los que respondieron diciendo que no dibujan).
+                missing = {}
+            end
             local pilotBad = (#missing > 0 or #notDrawing > 0 or #noConfig > 0)
-            table.insert(rows, name .. ": " .. (pilotBad and "❌" or "✅"))
+            local why = ""
+            if pilotBad then
+                local w = {}
+                if #missing == 7 then table.insert(w, "sin scripts")
+                elseif #missing > 0 then table.insert(w, "sin respuesta: " .. table.concat(missing, ", ")) end
+                if #notDrawing > 0 then table.insert(w, "no dibuja: " .. table.concat(notDrawing, ", ")) end
+                if #noConfig > 0 then table.insert(w, "sin config: " .. table.concat(noConfig, ", ")) end
+                why = " (" .. table.concat(w, "; ") .. ")"
+            end
+            table.insert(rows, name .. ": " .. (pilotBad and ("❌" .. why) or "✅"))
             if pilotBad then badCount = badCount + 1 end
             if pilotBad then
                 local parts = {}
@@ -1216,6 +1230,8 @@ local function healthReport()
     end
     if badCount > 0 then
         healthChat("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
+    else
+        healthChat("[CHEQUEO] ✅ Todo OK: los " .. checked .. " pilotos tienen los scripts funcionando.")
     end
     for _, row in ipairs(rows) do ac.log("[HEALTH] " .. row) end
     for _, line in ipairs(lines) do ac.log("[HEALTH] " .. line) end
