@@ -1,3 +1,4 @@
+local health = { t = 0, lastDraw = 0, welcome = false } -- autodiagnóstico, ver el final del archivo
 sim = ac.getSim()
 car = ac.getCar(0)
 local texFilePath = (ac.getFolder(ac.FolderID.Root) .. "\\content\\texture\\")
@@ -273,6 +274,8 @@ end)
 ac.debug("!version", "startLights v0.9-verde")
 
 function script.update(dt)
+    health.t = health.t + dt
+    if health.tick then health.tick(dt) end
     -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
     -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
     -- cambiar de cámara a otro auto).
@@ -323,8 +326,12 @@ function script.update(dt)
                     physics.setCarPenalty(ac.PenaltyType.MandatoryPits, penaltyType)
                 end
             else
-                ac.sendChatMessage(car:driverName() ..
-                    " Reacted in: " .. math.abs(math.round(startTime + delayTime - sim.currentSessionTime, 0)) .. "ms.")
+                local reactionMs = math.abs(math.round(startTime + delayTime - sim.currentSessionTime, 0))
+                ac.sendChatMessage(car:driverName() .. " Reacted in: " .. reactionMs .. "ms.")
+                -- Además del chat (que se pierde rápido entre otros mensajes), se transmite
+                -- como evento para que announcements.lua arme una tabla ordenada con el
+                -- tiempo de reacción de todos los pilotos.
+                reactionTimeEvent({ ms = reactionMs })
             end
         end
     end
@@ -434,6 +441,7 @@ local dragging = false
 local dragOffsetX, dragOffsetY = 0, 0
 
 function script.drawUI() -- Panel tipo gantry F1
+    health.lastDraw = health.t
     --ac.debug("path", texFilePath .. "texture_trafficlight_off.png")
     --ac.debug("size", "x:" .. windowWidth .. " y:" .. windowHeight)
     --ac.debug("a", sim.currentSessionTime)
@@ -578,3 +586,88 @@ function script.drawUI() -- Panel tipo gantry F1
         end
     end
 end
+
+-- ===================================================================================
+-- Autodiagnóstico y reparación suave (mismo bloque en los 7 scripts, ver announcements.lua
+-- para el botón de admin y el reporte). ID de este script: 5 (Luces de largada)
+--   1 Anuncios | 2 Penalizaciones | 3 Safety Car | 4 Vuelta Previa | 5 Luces de largada
+--   6 Largada en Movimiento | 7 Bandera Verde
+-- Qué hace: (1) responde cuando el admin pide un chequeo, informando si este script está
+-- corriendo, si recibió la configuración del servidor y si realmente está dibujando
+-- (drawUI se ejecutó en los últimos 3 s). (2) Si detecta que corre pero NO dibuja, se
+-- repara solo (como mucho una vez cada 30 s). Reparar = reiniciar el estado que ya vimos que
+-- deja carteles invisibles: tamaño de pantalla y bloqueos de arrastre. No es una recarga
+-- del script (CSP no ofrece eso).
+-- ===================================================================================
+local HEALTH_SCRIPT_ID = 5
+local healthPending = nil
+local healthLastRepair = -999
+local healthNextCheck = 5
+
+health.ok = function()
+    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+end
+
+health.repair = function(reason)
+    healthLastRepair = health.t
+    local okRepair, errRepair = pcall(function()
+        windowWidth = sim.windowWidth
+        windowHeight = sim.windowHeight
+        dragging = false
+        globalDragging = false
+        globalDragPanelId = 0
+    end)
+    ac.log("[HEALTH] Reparación suave en Luces de largada (" .. tostring(reason) .. ")" ..
+        (okRepair and "" or (" ERROR: " .. tostring(errRepair))))
+end
+
+health.tick = function(dt)
+    if healthPending and health.t >= healthPending.at then
+        local p = healthPending
+        healthPending = nil
+        pcall(function()
+            healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
+        end)
+    end
+    if health.t >= healthNextCheck then
+        healthNextCheck = health.t + 5
+        if not health.ok() and (health.t - healthLastRepair) > 30 then
+            health.repair("autochequeo: el script corre pero drawUI no se ejecuta")
+        end
+    end
+end
+
+ac.onOnlineWelcome(function() health.welcome = true end)
+
+healthPingEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Ping"),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Las respuestas se escalonan (por ID de script y un poco al azar) para que 7 scripts x
+    -- todos los pilotos no revienten el límite de mensajes por segundo.
+    healthPending = { at = health.t + HEALTH_SCRIPT_ID * 0.25 + math.random() * 1.5, nonce = message.nonce }
+end,
+ac.SharedNamespace.ServerScript)
+
+healthRepairEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Repair"),
+    target = ac.StructItem.string(32) -- nombre del piloto (primeros 24 caracteres); vacío = todos
+}, function(sender, message)
+    local okName, myName = pcall(function() return string.sub(car:driverName(), 1, 24) end)
+    local target = tostring(message.target or "")
+    if target == "" or (okName and target == myName) then
+        health.repair("pedido del admin")
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+healthPongEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Pong"),
+    scriptId = ac.StructItem.float(),
+    visualOk = ac.StructItem.boolean(),
+    welcome = ac.StructItem.boolean(),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Solo announcements.lua junta las respuestas; acá solo se declara para poder enviar.
+end,
+ac.SharedNamespace.ServerScript)
