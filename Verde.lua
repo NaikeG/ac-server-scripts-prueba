@@ -1,3 +1,4 @@
+local health = { t = 0, lastDraw = 0, welcome = false } -- autodiagnóstico, ver el final del archivo
 -- ===== Cartel "VERDE" =====
 -- Mismo estilo visual que el ícono de Safety Car (caja negra + franja intermitente abajo),
 -- pero en verde, con parpadeo más rápido, y texto "VERDE" en vez de "SC". Completamente
@@ -14,6 +15,28 @@ local screen = {
 }
 
 local state = { enabled = false, alpha = 0 }
+
+-- Segundos que el cartel queda visible antes de apagarse solo
+local AUTO_OFF_SECONDS = 3
+local autoOffTimer = 0
+
+-- Sonido al activarse -- así, aunque el cartel no llegue a verse por el bug conocido de
+-- CSP/apps, el piloto se entera igual por el audio. La URL se completa después en Extra
+-- Options (queda vacía por defecto, sin sonido, hasta que se consiga un archivo).
+local greenSoundURL = ""
+local greenSound = nil
+local soundVolumeMultiplier = 2.5
+
+local function playSound(sound, label)
+    if sound == nil then return end
+    local ok, err = pcall(function()
+        sound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        sound:play()
+    end)
+    if not ok then
+        ac.log("[GREENFLAG] ERROR reproduciendo sonido (" .. label .. "): " .. tostring(err))
+    end
+end
 
 local function alphaColor(r, g, b, mult)
     return rgbm(r, g, b, state.alpha * (mult or 1))
@@ -111,6 +134,12 @@ greenFlagEvent = ac.OnlineEvent({
     enabled = ac.StructItem.boolean()
 }, function(sender, message)
     state.enabled = message.enabled
+    if state.enabled then
+        autoOffTimer = AUTO_OFF_SECONDS
+        playSound(greenSound, "verde activado")
+    else
+        autoOffTimer = 0
+    end
     ac.log("[GREENFLAG] " .. sender:driverName() .. " -> " .. tostring(state.enabled))
 end,
 ac.SharedNamespace.ServerScript)
@@ -122,6 +151,18 @@ ac.onOnlineWelcome(function(message, config)
         adminFlag = ui.OnlineExtraFlags.Admin
     end
 
+    greenSoundURL = config:get("GREENFLAG", "SOUND_URL", "")
+    soundVolumeMultiplier = config:get("GREENFLAG", "SOUND_VOLUME_MULTIPLIER", 2.5)
+    if greenSoundURL ~= "" then
+        local ok, result = pcall(function() return ui.MediaPlayer(greenSoundURL) end)
+        if ok then
+            greenSound = result
+            ac.log("[GREENFLAG] Sonido cargado OK: " .. greenSoundURL)
+        else
+            ac.log("[GREENFLAG] ERROR cargando sonido (" .. greenSoundURL .. "): " .. tostring(result))
+        end
+    end
+
     ui.registerOnlineExtra(
         ui.Icons.Flag,
         "🟢 Verde",
@@ -129,6 +170,7 @@ ac.onOnlineWelcome(function(message, config)
         nil,
         function()
             state.enabled = not state.enabled
+            autoOffTimer = state.enabled and AUTO_OFF_SECONDS or 0
             greenFlagEvent({ enabled = state.enabled })
             ac.log("[GREENFLAG] Estado: " .. tostring(state.enabled))
         end,
@@ -142,11 +184,22 @@ ac.onResolutionChange(function()
 end)
 
 function script.update(dt)
+    health.t = health.t + dt
+    if health.tick then health.tick(dt) end
     -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
     -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
     -- cambiar de cámara a otro auto).
     screen.w = sim.windowWidth
     screen.h = sim.windowHeight
+
+    -- Apagado automático: cada cliente apaga el cartel solo a los AUTO_OFF_SECONDS
+    if state.enabled and autoOffTimer > 0 then
+        autoOffTimer = autoOffTimer - dt
+        if autoOffTimer <= 0 then
+            autoOffTimer = 0
+            state.enabled = false
+        end
+    end
 
     if state.enabled or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + 0.08, 1)
@@ -156,6 +209,7 @@ function script.update(dt)
 end
 
 function script.drawUI()
+    health.lastDraw = health.t
     local mp = getMousePos()
     local mouseIsDown = isMouseButtonDown()
 
@@ -195,3 +249,88 @@ function script.drawUI()
 
     drawContent(baseX, baseY)
 end
+
+-- ===================================================================================
+-- Autodiagnóstico y reparación suave (mismo bloque en los 7 scripts, ver announcements.lua
+-- para el botón de admin y el reporte). ID de este script: 7 (Bandera Verde)
+--   1 Anuncios | 2 Penalizaciones | 3 Safety Car | 4 Vuelta Previa | 5 Luces de largada
+--   6 Largada en Movimiento | 7 Bandera Verde
+-- Qué hace: (1) responde cuando el admin pide un chequeo, informando si este script está
+-- corriendo, si recibió la configuración del servidor y si realmente está dibujando
+-- (drawUI se ejecutó en los últimos 3 s). (2) Si detecta que corre pero NO dibuja, se
+-- repara solo (como mucho una vez cada 30 s). Reparar = reiniciar el estado que ya vimos que
+-- deja carteles invisibles: tamaño de pantalla y bloqueos de arrastre. No es una recarga
+-- del script (CSP no ofrece eso).
+-- ===================================================================================
+local HEALTH_SCRIPT_ID = 7
+local healthPending = nil
+local healthLastRepair = -999
+local healthNextCheck = 5
+
+health.ok = function()
+    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+end
+
+health.repair = function(reason)
+    healthLastRepair = health.t
+    local okRepair, errRepair = pcall(function()
+        screen.w = sim.windowWidth
+        screen.h = sim.windowHeight
+        dragging = false
+        globalDragging = false
+        globalDragPanelId = 0
+    end)
+    ac.log("[HEALTH] Reparación suave en Bandera Verde (" .. tostring(reason) .. ")" ..
+        (okRepair and "" or (" ERROR: " .. tostring(errRepair))))
+end
+
+health.tick = function(dt)
+    if healthPending and health.t >= healthPending.at then
+        local p = healthPending
+        healthPending = nil
+        pcall(function()
+            healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
+        end)
+    end
+    if health.t >= healthNextCheck then
+        healthNextCheck = health.t + 5
+        if not health.ok() and (health.t - healthLastRepair) > 30 then
+            health.repair("autochequeo: el script corre pero drawUI no se ejecuta")
+        end
+    end
+end
+
+ac.onOnlineWelcome(function() health.welcome = true end)
+
+healthPingEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Ping"),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Las respuestas se escalonan (por ID de script y un poco al azar) para que 7 scripts x
+    -- todos los pilotos no revienten el límite de mensajes por segundo.
+    healthPending = { at = health.t + HEALTH_SCRIPT_ID * 0.25 + math.random() * 1.5, nonce = message.nonce }
+end,
+ac.SharedNamespace.ServerScript)
+
+healthRepairEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Repair"),
+    target = ac.StructItem.string(32) -- nombre del piloto (primeros 24 caracteres); vacío = todos
+}, function(sender, message)
+    local okName, myName = pcall(function() return string.sub(car:driverName(), 1, 24) end)
+    local target = tostring(message.target or "")
+    if target == "" or (okName and target == myName) then
+        health.repair("pedido del admin")
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+healthPongEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Pong"),
+    scriptId = ac.StructItem.float(),
+    visualOk = ac.StructItem.boolean(),
+    welcome = ac.StructItem.boolean(),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Solo announcements.lua junta las respuestas; acá solo se declara para poder enviar.
+end,
+ac.SharedNamespace.ServerScript)
