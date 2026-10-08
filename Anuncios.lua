@@ -1,3 +1,4 @@
+local health = { t = 0, lastDraw = 0, welcome = false } -- autodiagnóstico, ver el final del archivo
 sim = ac.getSim()
 car = ac.getCar(0)
 
@@ -656,6 +657,7 @@ local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp
 end
 
 function script.drawUI()
+    health.lastDraw = health.t
     -- El mouse se lee UNA SOLA VEZ acá arriba y se reutiliza en toda la función -- llamarlo
     -- de nuevo más abajo podía dar un resultado distinto en el mismo cuadro, provocando
     -- arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
@@ -891,6 +893,8 @@ function script.drawUI()
 end
 
 function script.update(dt)
+    health.t = health.t + dt
+    if health.tick then health.tick(dt) end
     -- Se actualiza el ancho/alto de pantalla TODOS los cuadros (no solo cuando dispara el
     -- evento de cambio de resolución) -- sospechamos que cambiar de cámara a otro auto y
     -- volver puede disparar ese evento con un valor transitorio/incorrecto que se queda
@@ -1038,3 +1042,188 @@ function script.update(dt)
         end
     end
 end
+
+-- ===================================================================================
+-- Autodiagnóstico y reparación suave (mismo bloque en los 7 scripts, ver announcements.lua
+-- para el botón de admin y el reporte). ID de este script: 1 (Anuncios)
+--   1 Anuncios | 2 Penalizaciones | 3 Safety Car | 4 Vuelta Previa | 5 Luces de largada
+--   6 Largada en Movimiento | 7 Bandera Verde
+-- Qué hace: (1) responde cuando el admin pide un chequeo, informando si este script está
+-- corriendo, si recibió la configuración del servidor y si realmente está dibujando
+-- (drawUI se ejecutó en los últimos 3 s). (2) Si detecta que corre pero NO dibuja, se
+-- repara solo (como mucho una vez cada 30 s). Reparar = reiniciar el estado que ya vimos que
+-- deja carteles invisibles: tamaño de pantalla y bloqueos de arrastre. No es una recarga
+-- del script (CSP no ofrece eso).
+-- ===================================================================================
+local HEALTH_SCRIPT_ID = 1
+local healthPending = nil
+local healthLastRepair = -999
+local healthNextCheck = 5
+
+health.ok = function()
+    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+end
+
+health.repair = function(reason)
+    healthLastRepair = health.t
+    local okRepair, errRepair = pcall(function()
+        screen.w = sim.windowWidth
+        screen.h = sim.windowHeight
+        globalDragging = false
+        globalDragPanelId = 0
+        activeDragTarget = nil
+    end)
+    ac.log("[HEALTH] Reparación suave en Anuncios (" .. tostring(reason) .. ")" ..
+        (okRepair and "" or (" ERROR: " .. tostring(errRepair))))
+end
+
+health.tick = function(dt)
+    if healthPending and health.t >= healthPending.at then
+        local p = healthPending
+        healthPending = nil
+        pcall(function()
+            healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
+        end)
+    end
+    if health.t >= healthNextCheck then
+        healthNextCheck = health.t + 5
+        if not health.ok() and (health.t - healthLastRepair) > 30 then
+            health.repair("autochequeo: el script corre pero drawUI no se ejecuta")
+        end
+    end
+end
+
+ac.onOnlineWelcome(function() health.welcome = true end)
+
+healthPingEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Ping"),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Las respuestas se escalonan (por ID de script y un poco al azar) para que 7 scripts x
+    -- todos los pilotos no revienten el límite de mensajes por segundo.
+    healthPending = { at = health.t + HEALTH_SCRIPT_ID * 0.25 + math.random() * 1.5, nonce = message.nonce }
+end,
+ac.SharedNamespace.ServerScript)
+
+healthRepairEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Repair"),
+    target = ac.StructItem.string(32) -- nombre del piloto (primeros 24 caracteres); vacío = todos
+}, function(sender, message)
+    local okName, myName = pcall(function() return string.sub(car:driverName(), 1, 24) end)
+    local target = tostring(message.target or "")
+    if target == "" or (okName and target == myName) then
+        health.repair("pedido del admin")
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+-- ===== Solo en announcements.lua: botón de chequeo para el admin y reporte =====
+local healthSession = nil -- { nonce, deadline, replies = { [nombre] = { [idScript] = {visualOk, welcome} } } }
+local HEALTH_NAMES = { "Anuncios", "Penalizaciones", "Safety Car", "Vuelta Previa", "Luces de largada", "Largada en Movimiento", "Bandera Verde" }
+
+healthPongEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Pong"),
+    scriptId = ac.StructItem.float(),
+    visualOk = ac.StructItem.boolean(),
+    welcome = ac.StructItem.boolean(),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    if not healthSession or message.nonce ~= healthSession.nonce then return end
+    local okName, name = pcall(function() return sender:driverName() end)
+    if not okName or not name then return end
+    healthSession.replies[name] = healthSession.replies[name] or {}
+    healthSession.replies[name][math.floor(message.scriptId + 0.5)] = { visualOk = message.visualOk, welcome = message.welcome }
+end,
+ac.SharedNamespace.ServerScript)
+
+local function healthStartCheck()
+    local nonce = math.floor(math.random() * 900000) + 1
+    healthSession = { nonce = nonce, deadline = health.t + 8, replies = {} }
+    healthPingEvent({ nonce = nonce })
+    ac.sendChatMessage("[CHEQUEO] Verificando scripts de todos los pilotos, resultado en unos segundos...")
+    ac.log("[HEALTH] Chequeo iniciado (nonce " .. nonce .. ")")
+end
+
+local function healthReport()
+    local s = healthSession
+    healthSession = nil
+    if not s then return end
+    local lines, toRepair, checked = {}, {}, 0
+    for _, c in ac.iterateCars() do
+        local okName, name = pcall(function() return c:driverName() end)
+        if okName and name and name ~= "" then
+            checked = checked + 1
+            local r = s.replies[name] or {}
+            local isMe = false
+            pcall(function() isMe = (name == car:driverName()) end)
+            if isMe then
+                -- El admin que pidió el chequeo se omite: si este script corre, tiene scripts, y
+                -- no se puede asumir que CSP le devuelva el eco de sus propias respuestas.
+                goto continue_car
+            end
+            local missing, notDrawing, noConfig = {}, {}, {}
+            for id = 1, 7 do
+                if not r[id] then
+                    table.insert(missing, HEALTH_NAMES[id])
+                else
+                    if not r[id].welcome then table.insert(noConfig, HEALTH_NAMES[id]) end
+                    if not r[id].visualOk then table.insert(notDrawing, HEALTH_NAMES[id]) end
+                end
+            end
+            if #missing > 0 or #notDrawing > 0 or #noConfig > 0 then
+                local parts = {}
+                if #missing == 7 then
+                    table.insert(parts, "NO tiene ningún script cargado (pedirle que reconecte)")
+                elseif #missing > 0 then
+                    table.insert(parts, "sin respuesta de: " .. table.concat(missing, ", "))
+                end
+                if #notDrawing > 0 then
+                    table.insert(parts, "no dibuja: " .. table.concat(notDrawing, ", ") .. " (se le manda reparación)")
+                    table.insert(toRepair, string.sub(name, 1, 24))
+                end
+                if #noConfig > 0 then
+                    table.insert(parts, "sin config del servidor: " .. table.concat(noConfig, ", "))
+                end
+                table.insert(lines, name .. " -> " .. table.concat(parts, " | "))
+            end
+        end
+        ::continue_car::
+    end
+    if #lines == 0 then
+        ac.sendChatMessage("[CHEQUEO] OK: los " .. checked .. " pilotos conectados tienen los 7 scripts funcionando.")
+    else
+        ac.sendChatMessage("[CHEQUEO] " .. #lines .. " de " .. checked .. " pilotos con problemas:")
+        for i, line in ipairs(lines) do
+            if i > 6 then
+                ac.sendChatMessage("[CHEQUEO] ... y " .. (#lines - 6) .. " más (ver log de CSP)")
+                break
+            end
+            ac.sendChatMessage("[CHEQUEO] " .. line)
+        end
+    end
+    for _, line in ipairs(lines) do ac.log("[HEALTH] " .. line) end
+    for _, name in ipairs(toRepair) do
+        healthRepairEvent({ target = name })
+    end
+end
+
+local healthBaseTick = health.tick
+health.tick = function(dt)
+    healthBaseTick(dt)
+    if healthSession and health.t >= healthSession.deadline then
+        local okReport, errReport = pcall(healthReport)
+        if not okReport then ac.log("[HEALTH] ERROR armando el reporte: " .. tostring(errReport)) end
+        healthSession = nil
+    end
+end
+
+ac.onOnlineWelcome(function(message, config)
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🩺 Chequear scripts de todos",
+        function() return true end,
+        nil,
+        healthStartCheck,
+        adminFlag
+    )
+end)
