@@ -1148,7 +1148,7 @@ local function healthReport()
     local s = healthSession
     healthSession = nil
     if not s then return end
-    local lines, toRepair, checked = {}, {}, 0
+    local lines, toRepair, checked, rows, badCount = {}, {}, 0, {}, 0
     for _, c in ac.iterateCars() do
         local okName, name = pcall(function() return c:driverName() end)
         -- ac.iterateCars() incluye TODOS los slots del servidor (también los vacíos/desconectados)
@@ -1177,7 +1177,10 @@ local function healthReport()
                     if not r[id].visualOk then table.insert(notDrawing, HEALTH_NAMES[id]) end
                 end
             end
-            if #missing > 0 or #notDrawing > 0 or #noConfig > 0 then
+            local pilotBad = (#missing > 0 or #notDrawing > 0 or #noConfig > 0)
+            table.insert(rows, name .. ": " .. (pilotBad and "❌" or "✅"))
+            if pilotBad then badCount = badCount + 1 end
+            if pilotBad then
                 local parts = {}
                 if #missing == 7 then
                     table.insert(parts, "NO tiene ningún script cargado (pedirle que reconecte)")
@@ -1196,18 +1199,18 @@ local function healthReport()
         end
         ::continue_car::
     end
-    if #lines == 0 then
-        ac.sendChatMessage("[CHEQUEO] OK: los " .. checked .. " pilotos conectados tienen los 7 scripts funcionando.")
-    else
-        ac.sendChatMessage("[CHEQUEO] " .. #lines .. " de " .. checked .. " pilotos con problemas:")
-        for i, line in ipairs(lines) do
-            if i > 6 then
-                ac.sendChatMessage("[CHEQUEO] ... y " .. (#lines - 6) .. " más (ver log de CSP)")
-                break
-            end
-            ac.sendChatMessage("[CHEQUEO] " .. line)
+    ac.sendChatMessage("[CHEQUEO] Resultado (" .. checked .. " pilotos):")
+    for i, row in ipairs(rows) do
+        if i > 14 then
+            ac.sendChatMessage("[CHEQUEO] ... y " .. (#rows - 14) .. " más (ver log de CSP)")
+            break
         end
+        ac.sendChatMessage(row)
     end
+    if badCount > 0 then
+        ac.sendChatMessage("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
+    end
+    for _, row in ipairs(rows) do ac.log("[HEALTH] " .. row) end
     for _, line in ipairs(lines) do ac.log("[HEALTH] " .. line) end
     for _, name in ipairs(toRepair) do
         healthRepairEvent({ target = name })
