@@ -1144,6 +1144,13 @@ local function healthStartCheck()
     ac.log("[HEALTH] Chequeo iniciado (nonce " .. nonce .. ")")
 end
 
+-- Cola de chat: mandar varios ac.sendChatMessage en el mismo cuadro hace que solo llegue el
+-- primero (el resto se pierde), así que se manda de a uno, uno por segundo.
+local healthChatQueue, healthChatNextAt = {}, 0
+local function healthChat(text)
+    table.insert(healthChatQueue, text)
+end
+
 local function healthReport()
     local s = healthSession
     healthSession = nil
@@ -1199,16 +1206,16 @@ local function healthReport()
         end
         ::continue_car::
     end
-    ac.sendChatMessage("[CHEQUEO] Resultado (" .. checked .. " pilotos):")
+    healthChat("[CHEQUEO] Resultado (" .. checked .. " pilotos):")
     for i, row in ipairs(rows) do
         if i > 14 then
-            ac.sendChatMessage("[CHEQUEO] ... y " .. (#rows - 14) .. " más (ver log de CSP)")
+            healthChat("[CHEQUEO] ... y " .. (#rows - 14) .. " más (ver log de CSP)")
             break
         end
-        ac.sendChatMessage(row)
+        healthChat(row)
     end
     if badCount > 0 then
-        ac.sendChatMessage("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
+        healthChat("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
     end
     for _, row in ipairs(rows) do ac.log("[HEALTH] " .. row) end
     for _, line in ipairs(lines) do ac.log("[HEALTH] " .. line) end
@@ -1220,6 +1227,10 @@ end
 local healthBaseTick = health.tick
 health.tick = function(dt)
     healthBaseTick(dt)
+    if #healthChatQueue > 0 and health.t >= healthChatNextAt then
+        healthChatNextAt = health.t + 1.0
+        ac.sendChatMessage(table.remove(healthChatQueue, 1))
+    end
     if healthSession and health.t >= healthSession.deadline then
         local okReport, errReport = pcall(healthReport)
         if not okReport then ac.log("[HEALTH] ERROR armando el reporte: " .. tostring(errReport)) end
