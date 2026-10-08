@@ -906,9 +906,10 @@ health.tick = function(dt)
     if healthPending and health.t >= healthPending.at then
         local p = healthPending
         healthPending = nil
-        pcall(function()
+        local okPong, errPong = pcall(function()
             healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
         end)
+        ac.log("[HEALTH] Largada en Movimiento: respuesta enviada ok=" .. tostring(okPong) .. (okPong and "" or (" err=" .. tostring(errPong))))
     end
     if health.t >= healthNextCheck then
         healthNextCheck = health.t + 5
@@ -926,6 +927,7 @@ healthPingEvent = ac.OnlineEvent({
 }, function(sender, message)
     -- Las respuestas se escalonan (por ID de script y un poco al azar) para que 7 scripts x
     -- todos los pilotos no revienten el límite de mensajes por segundo.
+    ac.log("[HEALTH] Largada en Movimiento: recibió el ping " .. tostring(message.nonce))
     healthPending = { at = health.t + HEALTH_SCRIPT_ID * 0.25 + math.random() * 1.5, nonce = message.nonce }
 end,
 ac.SharedNamespace.ServerScript)
