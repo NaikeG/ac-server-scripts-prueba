@@ -1275,7 +1275,7 @@ end
 
 ac.onOnlineWelcome(function(message, config)
     ui.registerOnlineExtra(
-        ui.Icons.Warning,
+        ui.Icons.Repair,
         "🩺 Chequear scripts de todos",
         function() return true end,
         nil,
