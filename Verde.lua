@@ -19,6 +19,7 @@ local state = { enabled = false, alpha = 0 }
 -- Segundos que el cartel queda visible antes de apagarse solo
 local AUTO_OFF_SECONDS = 3
 local autoOffTimer = 0
+local loggedDraw = false
 
 -- Sonido al activarse -- así, aunque el cartel no llegue a verse por el bug conocido de
 -- CSP/apps, el piloto se entera igual por el audio. La URL se completa después en Extra
@@ -201,6 +202,7 @@ function script.update(dt)
         end
     end
 
+    if not state.enabled then loggedDraw = false end
     if state.enabled or editingPanelId == MY_PREVIEW_ID then
         state.alpha = math.min(state.alpha + 0.08, 1)
     else
@@ -247,7 +249,31 @@ function script.drawUI()
         end
     end
 
-    drawContent(baseX, baseY)
+    -- Si la posición guardada quedó fuera de pantalla (cambio de resolución, config vieja), se
+    -- corrige: un cartel dibujado fuera de la pantalla se oye pero no se ve.
+    if screen.w > 0 and screen.h > 0 then
+        local cx = math.max(0, math.min(baseX, screen.w - boxWidth))
+        local cy = math.max(0, math.min(baseY, screen.h - boxHeight))
+        if cx ~= baseX or cy ~= baseY then
+            ac.log(string.format("[GREENFLAG] Posición fuera de pantalla (%.0f,%.0f) con pantalla %dx%d -> corregida a (%.0f,%.0f)",
+                baseX, baseY, screen.w, screen.h, cx, cy))
+            baseX, baseY = cx, cy
+            panelPosCfg.posX = baseX / screen.w
+            panelPosCfg.posY = baseY / screen.h
+        end
+    end
+
+    -- Un log por activación, para poder ver en el log de CSP si el cartel realmente se dibuja
+    if not loggedDraw then
+        loggedDraw = true
+        ac.log(string.format("[GREENFLAG] Dibujando cartel en (%.0f,%.0f), alpha=%.2f, pantalla %dx%d",
+            baseX, baseY, state.alpha, screen.w, screen.h))
+    end
+
+    local okDraw, errDraw = pcall(drawContent, baseX, baseY)
+    if not okDraw then
+        ac.log("[GREENFLAG] ERROR dibujando el cartel: " .. tostring(errDraw))
+    end
 end
 
 -- ===================================================================================
