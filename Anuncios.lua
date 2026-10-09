@@ -1056,6 +1056,8 @@ end
 -- del script (CSP no ofrece eso).
 -- ===================================================================================
 local HEALTH_SCRIPT_ID = 1
+local healthVersionEvent = nil
+local healthVersions = {}
 local healthPending = nil
 local healthLastRepair = -999
 local healthNextCheck = 5
@@ -1083,6 +1085,9 @@ health.tick = function(dt)
         healthPending = nil
         pcall(function()
             healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
+            if healthVersionEvent then
+                healthVersionEvent({ code = ac.getPatchVersionCode(), nonce = p.nonce })
+            end
         end)
     end
     if health.t >= healthNextCheck then
@@ -1136,8 +1141,20 @@ healthPongEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
+healthVersionEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health CSP Version"),
+    code = ac.StructItem.float(),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    if not healthSession or message.nonce ~= healthSession.nonce then return end
+    local okName, name = pcall(function() return sender:driverName() end)
+    if okName and name then healthVersions[name] = math.floor(message.code + 0.5) end
+end,
+ac.SharedNamespace.ServerScript)
+
 local function healthStartCheck()
     local nonce = math.floor(math.random() * 900000) + 1
+    healthVersions = {}
     healthSession = { nonce = nonce, deadline = health.t + 8, replies = {} }
     healthPingEvent({ nonce = nonce })
     ac.sendChatMessage("[CHEQUEO] Verificando scripts de todos los pilotos, resultado en unos segundos...")
@@ -1199,7 +1216,9 @@ local function healthReport()
                 if #noConfig > 0 then table.insert(w, "sin config: " .. table.concat(noConfig, ", ")) end
                 why = " (" .. table.concat(w, "; ") .. ")"
             end
-            table.insert(rows, name .. ": " .. (pilotBad and ("❌" .. why) or "✅"))
+            local ver = isMe and ac.getPatchVersionCode() or healthVersions[name]
+            local verText = ver and (" [CSP " .. tostring(ver) .. "]") or " [CSP ?]"
+            table.insert(rows, name .. ": " .. (pilotBad and ("❌" .. why) or "✅") .. verText)
             if pilotBad then badCount = badCount + 1 end
             if pilotBad then
                 local parts = {}
