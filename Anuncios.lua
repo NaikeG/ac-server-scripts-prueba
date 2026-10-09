@@ -1152,15 +1152,6 @@ healthVersionEvent = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
-local function healthStartCheck()
-    local nonce = math.floor(math.random() * 900000) + 1
-    healthVersions = {}
-    healthSession = { nonce = nonce, deadline = health.t + 8, replies = {} }
-    healthPingEvent({ nonce = nonce })
-    ac.sendChatMessage("[CHEQUEO] Verificando scripts de todos los pilotos, resultado en unos segundos...")
-    ac.log("[HEALTH] Chequeo iniciado (nonce " .. nonce .. ")")
-end
-
 -- Cola de chat: mandar varios ac.sendChatMessage en el mismo cuadro hace que solo llegue el
 -- primero (el resto se pierde), así que se manda de a uno, uno por segundo.
 local healthChatQueue, healthChatNextAt = {}, 0
@@ -1168,10 +1159,50 @@ local function healthChat(text)
     table.insert(healthChatQueue, text)
 end
 
+local function healthStartCheckImpl(silent)
+    local nonce = math.floor(math.random() * 900000) + 1
+    healthVersions = {}
+    healthSession = { nonce = nonce, deadline = health.t + 8, replies = {}, silent = silent and true or false }
+    healthPingEvent({ nonce = nonce })
+    if not silent then
+        ac.sendChatMessage("[CHEQUEO] Verificando scripts de todos los pilotos, resultado en unos segundos...")
+    end
+    ac.log("[HEALTH] Chequeo " .. (silent and "automático" or "manual") .. " iniciado (nonce " .. nonce .. ")")
+end
+
+-- Chequeo automático: se activa en el cliente del admin cuando aprieta el botón (CSP no permite
+-- saber desde Lua quién es admin, así que solo corre en el cliente que lo armó).
+local healthAutoArmed = false
+local healthKnownPilots = nil -- nil = todavía no se hizo el primer escaneo
+local healthAutoAt = nil
+local healthNextScan = 0
+local HEALTH_AUTO_DELAY = 30 -- segundos después de que entra un piloto nuevo
+
+local function healthStartCheck()
+    healthStartCheckImpl(false)
+end
+
+local function healthManualButton()
+    if not healthAutoArmed then
+        healthAutoArmed = true
+        healthKnownPilots = nil
+        healthChat("[CHEQUEO] Chequeo automático ACTIVADO: se revisa solo cuando entra un piloto nuevo (y solo avisa si hay problemas).")
+    end
+    healthStartCheckImpl(false)
+end
+
+local function healthToggleAuto()
+    healthAutoArmed = not healthAutoArmed
+    healthKnownPilots = nil
+    healthAutoAt = nil
+    healthChat(healthAutoArmed and "[CHEQUEO] Chequeo automático ACTIVADO." or "[CHEQUEO] Chequeo automático DESACTIVADO.")
+end
+
 local function healthReport()
     local s = healthSession
     healthSession = nil
     if not s then return end
+    local silent = s.silent
     local lines, toRepair, checked, rows, badCount = {}, {}, 0, {}, 0
     for _, c in ac.iterateCars() do
         local okName, name = pcall(function() return c:driverName() end)
@@ -1239,18 +1270,34 @@ local function healthReport()
         end
         ::continue_car::
     end
-    healthChat("[CHEQUEO] Resultado (" .. checked .. " pilotos):")
-    for i, row in ipairs(rows) do
-        if i > 14 then
-            healthChat("[CHEQUEO] ... y " .. (#rows - 14) .. " más (ver log de CSP)")
-            break
+    if silent then
+        if badCount > 0 then
+            healthChat("[CHEQUEO] Revisión automática: hay pilotos con problemas:")
+            local shown = 0
+            for _, row in ipairs(rows) do
+                if string.find(row, "❌", 1, true) then
+                    shown = shown + 1
+                    if shown > 10 then break end
+                    healthChat(row)
+                end
+            end
+            healthChat("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
         end
-        healthChat(row)
-    end
-    if badCount > 0 then
-        healthChat("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
     else
-        healthChat("[CHEQUEO] ✅ Todo OK: los " .. checked .. " pilotos tienen los scripts funcionando.")
+        healthChat("[CHEQUEO] Resultado (" .. checked .. " pilotos):")
+        for i, row in ipairs(rows) do
+            if i > 14 then
+                healthChat("[CHEQUEO] ... y " .. (#rows - 14) .. " más (ver log de CSP)")
+                break
+            end
+            healthChat(row)
+        end
+        if badCount > 0 then
+            healthChat("[CHEQUEO] Los ❌ deberían reconectarse al servidor.")
+        else
+            healthChat("[CHEQUEO] ✅ Todo OK: los " .. checked .. " pilotos tienen los scripts funcionando.")
+        end
+
     end
     for _, row in ipairs(rows) do ac.log("[HEALTH] " .. row) end
     for _, line in ipairs(lines) do ac.log("[HEALTH] " .. line) end
@@ -1266,6 +1313,27 @@ health.tick = function(dt)
         healthChatNextAt = health.t + 1.0
         ac.sendChatMessage(table.remove(healthChatQueue, 1))
     end
+    if healthAutoArmed and health.t >= healthNextScan then
+        healthNextScan = health.t + 2
+        local okScan = pcall(function()
+            local current, hasNew = {}, false
+            for _, c in ac.iterateCars() do
+                local okConn, connected = pcall(function() return c.isConnected end)
+                local okName, name = pcall(function() return c:driverName() end)
+                if okConn and connected and okName and name and name ~= "" then
+                    current[name] = true
+                    if healthKnownPilots and not healthKnownPilots[name] then hasNew = true end
+                end
+            end
+            healthKnownPilots = current
+            if hasNew then healthAutoAt = health.t + HEALTH_AUTO_DELAY end
+        end)
+        if not okScan then ac.log("[HEALTH] ERROR escaneando pilotos") end
+    end
+    if healthAutoArmed and healthAutoAt and health.t >= healthAutoAt and not healthSession then
+        healthAutoAt = nil
+        healthStartCheckImpl(true)
+    end
     if healthSession and health.t >= healthSession.deadline then
         local okReport, errReport = pcall(healthReport)
         if not okReport then ac.log("[HEALTH] ERROR armando el reporte: " .. tostring(errReport)) end
@@ -1279,7 +1347,15 @@ ac.onOnlineWelcome(function(message, config)
         "🩺 Chequear scripts de todos",
         function() return true end,
         nil,
-        healthStartCheck,
+        healthManualButton,
+        adminFlag
+    )
+    ui.registerOnlineExtra(
+        ui.Icons.Repair,
+        "🩺 Chequeo automático: activar/desactivar",
+        function() return true end,
+        nil,
+        healthToggleAuto,
         adminFlag
     )
 end)
