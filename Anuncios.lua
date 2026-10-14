@@ -625,14 +625,17 @@ local dragOffsetX, dragOffsetY = 0, 0
 -- Devuelve la posición actual (x,y de la esquina superior izquierda) de un cartel, y si
 -- corresponde, actualiza esa posición por el arrastre. "centered" = true si fieldX/fieldY
 -- guardan el CENTRO del cartel en vez del borde izquierdo.
-local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp, mouseIsDown)
+local function panelXY(id, fieldX, fieldY, panelWidth, panelHeight, centered, mp, mouseIsDown, canStartDrag)
     local baseX = centered and (panelPositions[fieldX] * screen.w - panelWidth * 0.5) or (panelPositions[fieldX] * screen.w)
     local baseY = panelPositions[fieldY] * screen.h
 
     if mp == nil then return baseX, baseY end
 
     if activeDragTarget == nil then
-        if mouseIsDown then
+        -- canStartDrag == false: el cartel no está visible, un click encima NO debe iniciar un
+        -- arrastre (antes un click en esa zona invisible movía el cartel fantasma y, mientras
+        -- se mantenía apretado, OCULTABA los carteles de todos los demás scripts)
+        if mouseIsDown and canStartDrag ~= false then
             local overPanel = mp.x >= baseX and mp.x <= baseX + panelWidth and mp.y >= baseY and mp.y <= baseY + panelHeight
             if overPanel then
                 activeDragTarget = id
@@ -843,8 +846,15 @@ function script.drawUI()
     local rowHeight = 34
     local panelWidth = 260
     local isResultsPreview = (editingPanelId == 4)
-    local listPanelHeightForDrag = rowHeight * (isResultsPreview and 3 or RESULTS_MAX_SLOTS)
-    local resultsX, resultsY = panelXY("results", "resultsX", "resultsY", panelWidth, listPanelHeightForDrag, false, mp, mouseIsDown)
+    -- Solo cuenta la zona realmente ocupada por filas visibles (antes era siempre el alto de
+    -- los 15 lugares, aunque no hubiera ningún resultado en pantalla)
+    local filledSlots = 0
+    for slotIdx = 1, RESULTS_MAX_SLOTS do
+        if resultsSlots[slotIdx] then filledSlots = slotIdx end
+    end
+    local listPanelHeightForDrag = rowHeight * (isResultsPreview and 3 or filledSlots)
+    local resultsVisible = isResultsPreview or filledSlots > 0
+    local resultsX, resultsY = panelXY("results", "resultsX", "resultsY", panelWidth, math.max(listPanelHeightForDrag, 1), false, mp, mouseIsDown, resultsVisible)
 
     -- En modo edición, si todavía no hay resultados reales, se arman 3 filas de ejemplo
     local displaySlots = resultsSlots
@@ -1063,7 +1073,17 @@ local healthLastRepair = -999
 local healthNextCheck = 5
 
 health.ok = function()
-    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+    if sim.windowWidth <= 0 or sim.windowHeight <= 0 then return false end
+    -- Si el juego no está mostrando la interfaz (menú, repetición, pausa, ventana en segundo
+    -- plano, primeros segundos) CSP no llama a drawUI y eso NO es una falla del script.
+    local okState, uiExpected = pcall(function()
+        if health.t < 10 then return false end
+        if sim.isPaused or sim.isInMainMenu or sim.isReplayActive then return false end
+        if sim.isWindowForeground == false then return false end
+        return true
+    end)
+    if okState and not uiExpected then return true end
+    return (health.t - health.lastDraw) < 3
 end
 
 health.repair = function(reason)
