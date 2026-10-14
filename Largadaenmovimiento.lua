@@ -346,7 +346,19 @@ ac.onOnlineWelcome(function(message, config)
         end
     end
 
-    largaronSoundURL = config:get("ROLLINGSTART", "LARGARON_SOUND_URL", "")
+    -- El parser de Extra Options puede cortar el valor en el "//" de "https://" (lo toma como
+    -- comentario) y dejar solo "https:". Por eso también se acepta el link SIN el "https://"
+    -- (se agrega solo), y se avisa en el log si el valor llegó cortado.
+    local rawLargaron = tostring(config:get("ROLLINGSTART", "LARGARON_SOUND_URL", "") or "")
+    rawLargaron = rawLargaron:gsub('^%s*["\']?', ''):gsub('["\']?%s*$', '')
+    ac.log("[ROLLINGSTART] LARGARON_SOUND_URL recibido de Extra Options: '" .. rawLargaron .. "' (" .. #rawLargaron .. " caracteres)")
+    if rawLargaron == "https:" or rawLargaron == "http:" then
+        ac.log("[ROLLINGSTART] ERROR: el link llegó cortado en el '//'. Escribilo sin 'https://', por ejemplo: LARGARON_SOUND_URL = raw.githubusercontent.com/usuario/repo/refs/heads/main/archivo.mp3")
+        rawLargaron = ""
+    elseif rawLargaron ~= "" and not string.find(rawLargaron, "://", 1, true) then
+        rawLargaron = "https://" .. rawLargaron
+    end
+    largaronSoundURL = rawLargaron
     largaronLeadMs = config:get("ROLLINGSTART", "LARGARON_LEAD_MS", 0)
     if largaronSoundURL ~= "" then
         local okLg, resultLg = pcall(function() return ui.MediaPlayer(largaronSoundURL) end)
