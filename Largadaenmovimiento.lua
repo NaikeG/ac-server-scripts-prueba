@@ -166,6 +166,15 @@ local greenSound = nil
 local thirdRedSoundURL = ""
 local thirdRedSound = nil
 
+-- Audio "largo" sincronizado con el verde: el momento exacto del verde (startTime + delayTime)
+-- se conoce desde que arranca la secuencia, así que el audio se dispara con anticipación para
+-- que la palabra "Largaron" caiga justo cuando se pone verde. LARGARON_LEAD_MS = milisegundos
+-- desde el inicio del archivo hasta que empieza a decirse "Largaron".
+local largaronSoundURL = ""
+local largaronSound = nil
+local largaronLeadMs = 0
+local largaronPlayed = false
+
 -- Declaración adelantada: las funciones que realmente reproducen cada sonido se definen más
 -- abajo en el archivo, pero "greenNowEvent" (al que le sigue, unas líneas más abajo) necesita
 -- poder llamarlas. Sin esto, Lua no las ve como upvalue y la llamada busca una variable
@@ -209,6 +218,7 @@ local function logAvailablePenaltyTypes()
 end
 
 local function resetLightEdges()
+    largaronPlayed = false
     for i = 1, lightCount, 1 do
         prevLightsOn[i] = false
     end
@@ -333,6 +343,18 @@ ac.onOnlineWelcome(function(message, config)
             ac.log("[ROLLINGSTART] Green sound cargado OK: " .. greenSoundURL)
         else
             ac.log("[ROLLINGSTART] ERROR cargando green sound (" .. greenSoundURL .. "): " .. tostring(resultGreen))
+        end
+    end
+
+    largaronSoundURL = config:get("ROLLINGSTART", "LARGARON_SOUND_URL", "")
+    largaronLeadMs = config:get("ROLLINGSTART", "LARGARON_LEAD_MS", 0)
+    if largaronSoundURL ~= "" then
+        local okLg, resultLg = pcall(function() return ui.MediaPlayer(largaronSoundURL) end)
+        if okLg then
+            largaronSound = resultLg
+            ac.log("[ROLLINGSTART] Largaron sound cargado OK: " .. largaronSoundURL .. " (lead " .. tostring(largaronLeadMs) .. " ms)")
+        else
+            ac.log("[ROLLINGSTART] ERROR cargando largaron sound (" .. largaronSoundURL .. "): " .. tostring(resultLg))
         end
     end
 
@@ -472,6 +494,17 @@ function playThirdRedSound()
     end
 end
 
+local function playLargaronSound()
+    if not largaronSound then return end
+    local ok, err = pcall(function()
+        largaronSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        largaronSound:play()
+    end)
+    if not ok then
+        ac.log("[ROLLINGSTART] ERROR reproduciendo largaron sound: " .. tostring(err))
+    end
+end
+
 function script.update(dt)
     health.t = health.t + dt
     if health.tick then health.tick(dt) end
@@ -508,6 +541,19 @@ function script.update(dt)
     elseif phase == "sequence" then
         -- Detecta el momento del verde una sola vez y lo comparte con todos los demás clientes,
         -- para que el corte rojo/verde no dependa del reloj individual de cada uno.
+        -- Audio sincronizado: arranca LARGARON_LEAD_MS antes del verde calculado
+        if largaronSound and not largaronPlayed and not greenForced then
+            local playAt = startTime + delayTime - largaronLeadMs
+            if sim.currentSessionTime >= playAt then
+                largaronPlayed = true
+                if sim.currentSessionTime - playAt < 1500 then
+                    playLargaronSound()
+                else
+                    ac.log("[ROLLINGSTART] Largaron sound omitido: la secuencia llegó tarde a este cliente")
+                end
+            end
+        end
+
         if not greenForced and sim.currentSessionTime >= startTime + delayTime then
             greenForced = true
             greenForcedAt = sim.currentSessionTime
@@ -886,7 +932,17 @@ local healthLastRepair = -999
 local healthNextCheck = 5
 
 health.ok = function()
-    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+    if sim.windowWidth <= 0 or sim.windowHeight <= 0 then return false end
+    -- Si el juego no está mostrando la interfaz (menú, repetición, pausa, ventana en segundo
+    -- plano, primeros segundos) CSP no llama a drawUI y eso NO es una falla del script.
+    local okState, uiExpected = pcall(function()
+        if health.t < 10 then return false end
+        if sim.isPaused or sim.isInMainMenu or sim.isReplayActive then return false end
+        if sim.isWindowForeground == false then return false end
+        return true
+    end)
+    if okState and not uiExpected then return true end
+    return (health.t - health.lastDraw) < 3
 end
 
 health.repair = function(reason)
