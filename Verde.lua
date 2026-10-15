@@ -28,8 +28,15 @@ local greenSoundURL = ""
 local greenSound = nil
 local soundVolumeMultiplier = 2.5
 
+local lastPlayClock = -10
 local function playSound(sound, label)
-    if sound == nil then return end
+    if sound == nil then
+        ac.log("[GREENFLAG] playSound: no hay sonido cargado (" .. label .. ")")
+        return
+    end
+    -- evita doble reproducción (botón local + eco del evento)
+    if os.clock() - lastPlayClock < 1.5 then return end
+    lastPlayClock = os.clock()
     local ok, err = pcall(function()
         local vol = ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier
         pcall(function() sound:pause() end)
@@ -202,6 +209,8 @@ ac.onOnlineWelcome(function(message, config)
                 ac.log("[GREENFLAG] Safety Car apagado automáticamente" .. (okSc and "" or (" ERROR: " .. tostring(errSc))))
             end
             greenFlagEvent({ enabled = state.enabled })
+            -- el evento no siempre vuelve al que lo envía: sonido local directo
+            if state.enabled then playSound(greenSound, "verde local") end
             ac.log("[GREENFLAG] Estado: " .. tostring(state.enabled))
         end,
         adminFlag
