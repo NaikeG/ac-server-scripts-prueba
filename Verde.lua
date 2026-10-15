@@ -31,8 +31,13 @@ local soundVolumeMultiplier = 2.5
 local function playSound(sound, label)
     if sound == nil then return end
     local ok, err = pcall(function()
-        sound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+        local vol = ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier
+        pcall(function() sound:pause() end)
+        pcall(function() sound:setCurrentTime(0) end)
+        sound:setVolume(vol)
         sound:play()
+        ac.log("[GREENFLAG] play (" .. label .. ") vol=" .. string.format("%.2f", vol)
+            .. " playing=" .. tostring(sound:playing()) .. " ended=" .. tostring(sound:ended()))
     end)
     if not ok then
         ac.log("[GREENFLAG] ERROR reproduciendo sonido (" .. label .. "): " .. tostring(err))
@@ -163,7 +168,15 @@ ac.onOnlineWelcome(function(message, config)
         adminFlag = ui.OnlineExtraFlags.Admin
     end
 
-    greenSoundURL = config:get("GREENFLAG", "SOUND_URL", "")
+    greenSoundURL = tostring(config:get("GREENFLAG", "SOUND_URL", "") or "")
+    ac.log("[GREENFLAG] SOUND_URL recibido de Extra Options: '" .. greenSoundURL .. "'")
+    greenSoundURL = greenSoundURL:gsub("[\"'%s]", "")
+    if greenSoundURL == "https:" or greenSoundURL == "http:" then
+        ac.log("[GREENFLAG] ERROR: SOUND_URL llegó cortada ('" .. greenSoundURL .. "'). Escribila sin https://")
+        greenSoundURL = ""
+    elseif greenSoundURL ~= "" and not greenSoundURL:find("://", 1, true) then
+        greenSoundURL = "https://" .. greenSoundURL
+    end
     soundVolumeMultiplier = config:get("GREENFLAG", "SOUND_VOLUME_MULTIPLIER", 2.5)
     if greenSoundURL ~= "" then
         local ok, result = pcall(function() return ui.MediaPlayer(greenSoundURL) end)
