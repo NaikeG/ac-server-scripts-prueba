@@ -125,6 +125,17 @@ panelDragStateEventGreen = ac.OnlineEvent({
 end,
 ac.SharedNamespace.ServerScript)
 
+-- Mismo evento ("Safety Car", mismo formato) que usa safetyCar.lua: al apretar el botón de
+-- bandera verde se manda "enabled = false" para que el Safety Car se apague solo en todos los
+-- clientes (restablece también el restrictor y el lastre). Acá el receptor no hace nada: el
+-- que reacciona es safetyCar.lua.
+safetyCarOffEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Safety Car"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+end,
+ac.SharedNamespace.ServerScript)
+
 local function shouldHideForDrag()
     return globalDragging and globalDragPanelId ~= MY_PANEL_ID
 end
@@ -172,6 +183,11 @@ ac.onOnlineWelcome(function(message, config)
         function()
             state.enabled = not state.enabled
             autoOffTimer = state.enabled and AUTO_OFF_SECONDS or 0
+            if state.enabled then
+                -- La bandera verde solo se da bajo Safety Car: se apaga el Safety Car automáticamente
+                local okSc, errSc = pcall(function() safetyCarOffEvent({ enabled = false }) end)
+                ac.log("[GREENFLAG] Safety Car apagado automáticamente" .. (okSc and "" or (" ERROR: " .. tostring(errSc))))
+            end
             greenFlagEvent({ enabled = state.enabled })
             ac.log("[GREENFLAG] Estado: " .. tostring(state.enabled))
         end,
@@ -294,7 +310,17 @@ local healthLastRepair = -999
 local healthNextCheck = 5
 
 health.ok = function()
-    return (health.t - health.lastDraw) < 3 and sim.windowWidth > 0 and sim.windowHeight > 0
+    if sim.windowWidth <= 0 or sim.windowHeight <= 0 then return false end
+    -- Si el juego no está mostrando la interfaz (menú, repetición, pausa, ventana en segundo
+    -- plano, primeros segundos) CSP no llama a drawUI y eso NO es una falla del script.
+    local okState, uiExpected = pcall(function()
+        if health.t < 10 then return false end
+        if sim.isPaused or sim.isInMainMenu or sim.isReplayActive then return false end
+        if sim.isWindowForeground == false then return false end
+        return true
+    end)
+    if okState and not uiExpected then return true end
+    return (health.t - health.lastDraw) < 3
 end
 
 health.repair = function(reason)
