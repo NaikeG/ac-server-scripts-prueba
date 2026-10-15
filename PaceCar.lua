@@ -278,7 +278,7 @@ local function drawContent(originX, originY)
 end
 
 local function drawSidePanel(x, y, height)
-    local title = "SAFETY CAR"
+    local title = "AUTO DE SEGURIDAD"
     local subtitle = "MANTENER POSICIONES"
 
     ui.pushFont(ui.Font.Title)
