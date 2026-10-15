@@ -1,0 +1,499 @@
+local health = { t = 0, lastDraw = 0, welcome = false } -- autodiagnóstico, ver el final del archivo
+local sim = ac.getSim()
+local car = ac.getCar(0)
+local adminFlag = ui.OnlineExtraFlags.Admin
+
+-- ===== Modo de edición compartido: mismo evento que el resto de los scripts. Este cartel es
+-- el ID 6 -- solo se muestra con contenido de ejemplo cuando el menú lo tiene seleccionado. =====
+local editingPanelId = 0
+local MY_PREVIEW_ID = 6
+panelPreviewEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Preview Mode"),
+    selectedId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    editingPanelId = message.selectedId
+end,
+ac.SharedNamespace.ServerScript)
+
+local state = {
+    enabled = false,
+    alpha = 0
+}
+
+-- Config (se sobreescribe desde Extra Options, sección [SAFETYCAR])
+-- IMPORTANTE: escala 0-100 (porcentaje), NO 0-1. Ej: 80 = 80% de restricción.
+local restrictorValue = 80
+local ballastValue = 150 -- kg extra que se le suman al auto mientras el SC está afuera
+
+-- Excepción para el auto que hace de Safety Car: cada cliente sabe SOLO si "yo mismo" me
+-- marqué como el conductor del auto de seguridad (no hace falta saber quién es en los demás
+-- clientes) -- si es así, no me aplico ni restrictor ni lastre a mí mismo.
+local amISafetyCarDriver = false
+
+local function applyRestrictor(value)
+    if amISafetyCarDriver then
+        ac.log("[SAFETYCAR] Restrictor NO aplicado -- soy el auto de Safety Car")
+        return true
+    end
+    local ok, err = pcall(function() physics.setCarRestrictor(0, value) end)
+    if ok then
+        local okRead, currentVal = pcall(function() return car.restrictor end)
+        ac.log("[SAFETYCAR] Restrictor aplicado con éxito (valor pedido: " .. tostring(value) ..
+            ", car.restrictor ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
+    else
+        ac.log("[SAFETYCAR] ERROR aplicando restrictor: " .. tostring(err))
+    end
+    return ok
+end
+
+local function applyBallast(value)
+    if amISafetyCarDriver then
+        ac.log("[SAFETYCAR] Lastre NO aplicado -- soy el auto de Safety Car")
+        return true
+    end
+    local ok, err = pcall(function() physics.setCarBallast(0, value) end)
+    if ok then
+        local okRead, currentVal = pcall(function() return car.ballast end)
+        ac.log("[SAFETYCAR] Ballast aplicado con éxito (valor pedido: " .. tostring(value) ..
+            " kg, car.ballast ahora: " .. tostring(okRead and currentVal or "no se pudo leer") .. ")")
+    else
+        ac.log("[SAFETYCAR] ERROR aplicando ballast: " .. tostring(err))
+    end
+    return ok
+end
+
+local function applyRestrictorQuiet(value)
+    if amISafetyCarDriver then return end
+    pcall(function() physics.setCarRestrictor(0, value) end)
+end
+
+local function applyBallastQuiet(value)
+    if amISafetyCarDriver then return end
+    pcall(function() physics.setCarBallast(0, value) end)
+end
+
+local function onSafetyCarStateChanged()
+    if state.enabled then
+        applyRestrictor(restrictorValue)
+        applyBallast(ballastValue)
+        ac.log("[SAFETYCAR] Activado: restrictor=" .. tostring(restrictorValue) .. " ballast=" .. tostring(ballastValue))
+    else
+        applyRestrictor(0)
+        applyBallast(0)
+        ac.log("[SAFETYCAR] Desactivado, potencia y peso normales restaurados")
+    end
+end
+
+local screen = {
+    w = sim.windowWidth,
+    h = sim.windowHeight
+}
+
+-- Sonido (se reproduce una sola vez al activar el Safety Car)
+local activateURL = ""
+local activateSound = nil
+local soundVolumeMultiplier = 2.5
+local activateSoundPlayed = false
+
+safetyCarEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Safety Car"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    state.enabled = message.enabled
+    if state.enabled then
+        activateSoundPlayed = false
+    end
+    onSafetyCarStateChanged()
+    ac.log(
+        "[SAFETYCAR] " ..
+        sender:driverName() ..
+        " -> " ..
+        tostring(state.enabled)
+    )
+end,
+ac.SharedNamespace.ServerScript)
+
+-- Marca (o desmarca) al auto que efectivamente maneja de Safety Car, para eximirlo del
+-- restrictor/lastre. Se dispara desde el propio cliente de quien lo maneja -- cada uno
+-- recibe el aviso y chequea si el remitente es uno mismo (mismo patrón que usamos en todo
+-- el proyecto para identificarse sin depender del contenido del mensaje).
+isSafetyCarDriverEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Is Safety Car Driver"),
+    enabled = ac.StructItem.boolean()
+}, function(sender, message)
+    local okSenderName, senderName = pcall(function() return sender:driverName() end)
+    local okMyName, myName = pcall(function() return car:driverName() end)
+    if okSenderName and okMyName and senderName == myName then
+        amISafetyCarDriver = message.enabled
+        ac.log("[SAFETYCAR] Yo soy el auto de Safety Car: " .. tostring(amISafetyCarDriver))
+        -- Si ya estaba activo el Safety Car cuando me marco/desmarco, reaplica de inmediato
+        if state.enabled then
+            onSafetyCarStateChanged()
+        else
+            applyRestrictor(0)
+            applyBallast(0)
+        end
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+ac.onResolutionChange(function()
+    screen.w = ac.getSim().windowWidth
+    screen.h = ac.getSim().windowHeight
+end)
+
+ac.onOnlineWelcome(function(message, config)
+    if config:get("SAFETYCAR", "ADMIN_ONLY", 1) == 0 then
+        adminFlag = ui.OnlineExtraFlags.None
+    else
+        adminFlag = ui.OnlineExtraFlags.Admin
+    end
+
+    restrictorValue = config:get("SAFETYCAR", "RESTRICTOR_VALUE", 80)
+    ballastValue = config:get("SAFETYCAR", "BALLAST_VALUE", 150)
+
+    activateURL = config:get("SAFETYCAR", "SOUND_ACTIVATE_URL", "")
+    soundVolumeMultiplier = config:get("SAFETYCAR", "SOUND_VOLUME_MULTIPLIER", 2.5)
+    if activateURL ~= "" then
+        local ok, result = pcall(function() return ui.MediaPlayer(activateURL) end)
+        if ok then
+            activateSound = result
+            ac.log("[SAFETYCAR] Sonido cargado OK: " .. activateURL)
+        else
+            ac.log("[SAFETYCAR] ERROR cargando sonido (" .. activateURL .. "): " .. tostring(result))
+        end
+    end
+
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🚧 Pace Car",
+        function() return true end,
+        nil,
+        function()
+            state.enabled = not state.enabled
+            if state.enabled then
+                activateSoundPlayed = false
+            end
+            onSafetyCarStateChanged()
+            safetyCarEvent({ enabled = state.enabled })
+            ac.log("[SAFETYCAR] Estado: " .. tostring(state.enabled))
+        end,
+        adminFlag
+    )
+
+    -- Botón aparte para marcarse como el auto que efectivamente maneja de Safety Car (queda
+    -- exento del restrictor/lastre). Admin-only también, para que no se lo pueda marcar
+    -- cualquiera y esquivar la sanción.
+    ui.registerOnlineExtra(
+        ui.Icons.Warning,
+        "🚗 Soy el Pace Car",
+        function() return true end,
+        nil,
+        function()
+            amISafetyCarDriver = not amISafetyCarDriver
+            isSafetyCarDriverEvent({ enabled = amISafetyCarDriver })
+            if state.enabled then
+                onSafetyCarStateChanged()
+            else
+                applyRestrictor(0)
+                applyBallast(0)
+            end
+            ac.log("[SAFETYCAR] Marcado como auto de Safety Car (yo mismo): " .. tostring(amISafetyCarDriver))
+        end,
+        adminFlag
+    )
+end)
+
+function script.update(dt)
+    health.t = health.t + dt
+    if health.tick then health.tick(dt) end
+    -- Se actualiza el ancho/alto de pantalla TODOS los cuadros -- ver nota igual en el resto
+    -- de los scripts del proyecto sobre por qué (posible causa de carteles invisibles tras
+    -- cambiar de cámara a otro auto).
+    screen.w = sim.windowWidth
+    screen.h = sim.windowHeight
+
+    local speed = 3.5
+    if state.enabled or editingPanelId == MY_PREVIEW_ID then
+        state.alpha = math.min(state.alpha + dt * speed, 1)
+    else
+        state.alpha = math.max(state.alpha - dt * speed, 0)
+    end
+
+    -- El restrictor/ballast solo se aplican con la sanción REAL activa, nunca solo por
+    -- estar en modo de edición (no queremos afectar la física mientras se acomodan carteles).
+    if state.enabled then
+        applyRestrictorQuiet(restrictorValue)
+        applyBallastQuiet(ballastValue)
+    end
+
+    if state.enabled and not activateSoundPlayed and activateSound then
+        activateSoundPlayed = true
+        local ok, err = pcall(function()
+            activateSound:setVolume(ac.getAudioVolume(ac.AudioChannel.Main) * soundVolumeMultiplier)
+            activateSound:play()
+        end)
+        if not ok then
+            ac.log("[SAFETYCAR] ERROR reproduciendo sonido: " .. tostring(err))
+        end
+    end
+end
+
+local function alphaColor(r, g, b, mult)
+    return rgbm(r, g, b, state.alpha * (mult or 1))
+end
+
+local function drawContent(originX, originY)
+    local boxWidth = 150
+    local blackHeight = 70
+    local yellowHeight = 80
+    local x = originX
+    local y = originY
+
+    -- Caja negra con "PACE CAR"
+    ui.drawRectFilled(vec2(x, y), vec2(x + boxWidth, y + blackHeight), alphaColor(0.05, 0.05, 0.05, 1))
+    ui.drawRect(vec2(x, y), vec2(x + boxWidth, y + blackHeight), alphaColor(0.25, 0.25, 0.25, 1), 0, 0, 2)
+
+    ui.pushFont(ui.Font.Title)
+    local text = "PACE CAR"
+    local textSize = ui.measureText(text)
+    ui.setCursor(vec2(x + (boxWidth - textSize.x) * 0.5, y + (blackHeight - textSize.y) * 0.5))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1, 1, 1))
+    ui.text(text)
+    ui.popStyleColor()
+    ui.popFont()
+
+    -- Bandera de Pace Car (TC): azul / blanco / naranja en horizontal, intermitente
+    local blinkOn = math.floor(sim.currentSessionTime / 400) % 2 == 0
+    local barY = y + blackHeight
+    local third = yellowHeight / 3
+    local dim = blinkOn and 1 or 0.15
+    ui.drawRectFilled(vec2(x, barY), vec2(x + boxWidth, barY + third), alphaColor(0.0 * dim + 0.02, 0.22 * dim, 0.75 * dim, 1))
+    ui.drawRectFilled(vec2(x, barY + third), vec2(x + boxWidth, barY + third * 2), alphaColor(1.0 * dim, 1.0 * dim, 1.0 * dim, 1))
+    ui.drawRectFilled(vec2(x, barY + third * 2), vec2(x + boxWidth, barY + yellowHeight), alphaColor(1.0 * dim, 0.45 * dim, 0.0, 1))
+    ui.drawRect(vec2(x, barY), vec2(x + boxWidth, barY + yellowHeight), alphaColor(0.25, 0.25, 0.25, 1), 0, 0, 2)
+
+    return boxWidth, blackHeight + yellowHeight
+end
+
+local function drawSidePanel(x, y, height)
+    local title = "SAFETY CAR"
+    local subtitle = "MANTENER POSICIONES"
+
+    ui.pushFont(ui.Font.Title)
+    local titleSize = ui.measureText(title)
+    local subSize = ui.measureText(subtitle)
+    ui.popFont()
+
+    local panelWidth = math.max(titleSize.x, subSize.x) + 30
+
+    ui.drawRectFilled(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(0.03, 0.03, 0.03, 0.92), 10)
+    ui.drawRect(vec2(x, y), vec2(x + panelWidth, y + height), alphaColor(1.0, 0.82, 0.0, 1), 10, 0, 3)
+
+    ui.pushFont(ui.Font.Title)
+    ui.setCursor(vec2(x + (panelWidth - titleSize.x) * 0.5, y + (height * 0.5) - titleSize.y - 2))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1.0, 0.82, 0.0))
+    ui.text(title)
+    ui.popStyleColor()
+
+    ui.setCursor(vec2(x + (panelWidth - subSize.x) * 0.5, y + (height * 0.5) + 2))
+    ui.pushStyleColor(ui.StyleColor.Text, alphaColor(1, 1, 1))
+    ui.text(subtitle)
+    ui.popStyleColor()
+    ui.popFont()
+
+    return panelWidth
+end
+
+-- ===== Arrastre manual con click sostenido =====
+
+local function isMouseButtonDown()
+    local ok, val = pcall(function() return ui.mouseDown(0) end)
+    if ok then return val end
+    return false
+end
+
+local function getMousePos()
+    local ok, val = pcall(function() return ui.mousePos() end)
+    if ok then return val end
+    return nil
+end
+
+-- ===== Ocultar todos los carteles de todos los scripts menos el que se está arrastrando =====
+-- ID global de este cartel: 6 (ver la lista completa de IDs en announcements.lua)
+local MY_PANEL_ID = 6
+local globalDragging = false
+local globalDragPanelId = 0
+
+panelDragStateEvent2 = ac.OnlineEvent({
+    key = ac.StructItem.key("Panel Drag State"),
+    dragging = ac.StructItem.boolean(),
+    panelId = ac.StructItem.float()
+}, function(sender, message)
+    if sender:driverName() ~= car:driverName() then return end
+    globalDragging = message.dragging
+    globalDragPanelId = message.panelId
+end,
+ac.SharedNamespace.ServerScript)
+
+local function shouldHideForDrag()
+    return globalDragging and globalDragPanelId ~= MY_PANEL_ID
+end
+
+-- Posición guardada por el usuario (persiste entre sesiones, es individual de cada piloto)
+local cfg = ac.storage({
+    posX = 552 / 1920,  -- proporción de pantalla, no píxeles fijos
+    posY = 213 / 1080
+})
+
+local dragging = false
+local dragOffsetX, dragOffsetY = 0, 0
+local boxW, boxH = 150, 150
+
+function script.drawUI()
+    health.lastDraw = health.t
+    -- El mouse se lee UNA SOLA VEZ acá arriba y se reutiliza en toda la función -- llamarlo
+    -- de nuevo más abajo podía dar un resultado distinto en el mismo cuadro, provocando
+    -- arrastres fantasma que se autocorregían al cuadro siguiente sin parar.
+    local mp = getMousePos()
+    local mouseIsDown = isMouseButtonDown()
+
+    -- Chequeo de seguridad INCONDICIONAL: si había un cartel en arrastre y el mouse ya no
+    -- está apretado, se libera YA, sin importar si el cartel dejó de ser visible a mitad
+    -- de camino (por ejemplo si se apaga el Safety Car mientras se estaba moviendo el
+    -- cartel). Sin esto, el candado compartido puede quedar trabado para siempre.
+    if dragging and not mouseIsDown then
+        dragging = false
+        panelDragStateEvent2({ dragging = false, panelId = 0 })
+        ac.log("[SAFETYCAR] Arrastre liberado por seguridad")
+    end
+
+    if state.alpha <= 0 or shouldHideForDrag() then
+        return
+    end
+
+    local boxX = cfg.posX * screen.w
+    local boxY = cfg.posY * screen.h
+
+    if mp ~= nil then
+        local overBox = mp.x >= boxX and mp.x <= boxX + boxW and mp.y >= boxY and mp.y <= boxY + boxH
+
+        if not dragging and mouseIsDown and overBox then
+            dragging = true
+            dragOffsetX = mp.x - boxX
+            dragOffsetY = mp.y - boxY
+            panelDragStateEvent2({ dragging = true, panelId = MY_PANEL_ID })
+        end
+
+        if dragging then
+            if mouseIsDown then
+                boxX = mp.x - dragOffsetX
+                boxY = mp.y - dragOffsetY
+                cfg.posX = boxX / screen.w
+                cfg.posY = boxY / screen.h
+            else
+                dragging = false
+                panelDragStateEvent2({ dragging = false, panelId = 0 })
+            end
+        end
+    end
+
+    boxW, boxH = drawContent(boxX, boxY)
+    drawSidePanel(boxX + boxW + 16, boxY, boxH)
+end
+
+-- ===================================================================================
+-- Autodiagnóstico y reparación suave (mismo bloque en los 7 scripts, ver announcements.lua
+-- para el botón de admin y el reporte). ID de este script: 3 (Safety Car)
+--   1 Anuncios | 2 Penalizaciones | 3 Safety Car | 4 Vuelta Previa | 5 Luces de largada
+--   6 Largada en Movimiento | 7 Bandera Verde
+-- Qué hace: (1) responde cuando el admin pide un chequeo, informando si este script está
+-- corriendo, si recibió la configuración del servidor y si realmente está dibujando
+-- (drawUI se ejecutó en los últimos 3 s). (2) Si detecta que corre pero NO dibuja, se
+-- repara solo (como mucho una vez cada 30 s). Reparar = reiniciar el estado que ya vimos que
+-- deja carteles invisibles: tamaño de pantalla y bloqueos de arrastre. No es una recarga
+-- del script (CSP no ofrece eso).
+-- ===================================================================================
+local HEALTH_SCRIPT_ID = 3
+local healthPending = nil
+local healthLastRepair = -999
+local healthNextCheck = 5
+
+health.ok = function()
+    if sim.windowWidth <= 0 or sim.windowHeight <= 0 then return false end
+    -- Si el juego no está mostrando la interfaz (menú, repetición, pausa, ventana en segundo
+    -- plano, primeros segundos) CSP no llama a drawUI y eso NO es una falla del script.
+    local okState, uiExpected = pcall(function()
+        if health.t < 10 then return false end
+        if sim.isPaused or sim.isInMainMenu or sim.isReplayActive then return false end
+        if sim.isWindowForeground == false then return false end
+        return true
+    end)
+    if okState and not uiExpected then return true end
+    return (health.t - health.lastDraw) < 3
+end
+
+health.repair = function(reason)
+    healthLastRepair = health.t
+    local okRepair, errRepair = pcall(function()
+        screen.w = sim.windowWidth
+        screen.h = sim.windowHeight
+        dragging = false
+        globalDragging = false
+        globalDragPanelId = 0
+    end)
+    ac.log("[HEALTH] Reparación suave en Safety Car (" .. tostring(reason) .. ")" ..
+        (okRepair and "" or (" ERROR: " .. tostring(errRepair))))
+end
+
+health.tick = function(dt)
+    if healthPending and health.t >= healthPending.at then
+        local p = healthPending
+        healthPending = nil
+        pcall(function()
+            healthPongEvent({ scriptId = HEALTH_SCRIPT_ID, visualOk = health.ok(), welcome = health.welcome, nonce = p.nonce })
+        end)
+    end
+    if health.t >= healthNextCheck then
+        healthNextCheck = health.t + 5
+        if not health.ok() and (health.t - healthLastRepair) > 30 then
+            health.repair("autochequeo: el script corre pero drawUI no se ejecuta")
+        end
+    end
+end
+
+ac.onOnlineWelcome(function() health.welcome = true end)
+
+healthPingEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Ping"),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Las respuestas se escalonan (por ID de script y un poco al azar) para que 7 scripts x
+    -- todos los pilotos no revienten el límite de mensajes por segundo.
+    healthPending = { at = health.t + HEALTH_SCRIPT_ID * 0.25 + math.random() * 1.5, nonce = message.nonce }
+end,
+ac.SharedNamespace.ServerScript)
+
+healthRepairEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Repair"),
+    target = ac.StructItem.string(32) -- nombre del piloto (primeros 24 caracteres); vacío = todos
+}, function(sender, message)
+    local okName, myName = pcall(function() return string.sub(car:driverName(), 1, 24) end)
+    local target = tostring(message.target or "")
+    if target == "" or (okName and target == myName) then
+        health.repair("pedido del admin")
+    end
+end,
+ac.SharedNamespace.ServerScript)
+
+healthPongEvent = ac.OnlineEvent({
+    key = ac.StructItem.key("Health Pong"),
+    scriptId = ac.StructItem.float(),
+    visualOk = ac.StructItem.boolean(),
+    welcome = ac.StructItem.boolean(),
+    nonce = ac.StructItem.float()
+}, function(sender, message)
+    -- Solo announcements.lua junta las respuestas; acá solo se declara para poder enviar.
+end,
+ac.SharedNamespace.ServerScript)
