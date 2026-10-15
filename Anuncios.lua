@@ -1019,6 +1019,9 @@ function script.update(dt)
         raceLastLapAnnounced = true
         table.insert(pendingChats, "🏁 ÚLTIMA VUELTA!")
         lastLapEvent({})
+        -- El líder marca raceLastLapAnnounced ANTES de mandar el evento, así que cuando le llega
+        -- el eco de su propio evento el receptor sale sin sonar. Por eso suena directo acá.
+        playLastLapSound()
         ac.log("[ANNOUNCE] Última vuelta de la carrera anunciada (líder detectado por " .. car:driverName() .. ")")
     end
 
