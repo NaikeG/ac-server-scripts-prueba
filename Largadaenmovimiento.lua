@@ -63,6 +63,9 @@ local greenForcedAt = 0   -- sim.currentSessionTime local en el momento en que s
 -- conexión puntual igual le llegue alguna copia. Como el mensaje lleva un horario ABSOLUTO,
 -- reenviarlo más tarde no desincroniza a nadie.
 local resendQueue = {}
+-- startTime de la última secuencia CANCELADA: si llega un reenvío tardío de esa misma
+-- secuencia (phase 2 con el mismo startTime), se ignora en vez de revivirla.
+local cancelledStartTime = nil
 local function scheduleResend(payload, delaySeconds)
     table.insert(resendQueue, { timer = delaySeconds, payload = payload })
 end
@@ -227,6 +230,8 @@ end
 greenNowEvent = ac.OnlineEvent({
     key = ac.StructItem.key("Rolling Start Green Now")
 }, function(sender, message)
+    -- Si la secuencia fue cancelada (phase ya no es "sequence") un aviso de verde tardío se ignora
+    if phase ~= "sequence" then return end
     if not greenForced then
         greenForced = true
         greenForcedAt = sim.currentSessionTime
@@ -250,6 +255,13 @@ rollingStartEvent = ac.OnlineEvent({
     -- resetear todo por error y volver a fase "sequence".
     local isDuplicate = (message.phase == 2 and phase == "sequence" and
         startTime == message.startTime and delayTime == message.delayTime)
+    local isCancelled = (message.phase == 2 and cancelledStartTime ~= nil and
+        message.startTime == cancelledStartTime)
+
+    if isCancelled then
+        ac.log("[ROLLINGSTART] Reenvío de una secuencia ya cancelada, ignorado")
+        return
+    end
 
     if message.phase == 1 then
         phase = "yellow"
@@ -274,6 +286,7 @@ rollingStartEvent = ac.OnlineEvent({
             savePitLimiterResults()
         end
     else
+        if phase == "sequence" then cancelledStartTime = startTime end
         phase = "off"
         restrictorActive = false
         restrictorTimer = 0
@@ -386,6 +399,8 @@ ac.onOnlineWelcome(function(message, config)
 local function startSequence()
     local st = sim.currentSessionTime + seqDuration
     local dt = math.random(lightsOutMin, lightsOutMax)
+    resendQueue = {}
+    cancelledStartTime = nil
     phase = "sequence"
     startTime = st
     delayTime = dt
@@ -437,11 +452,20 @@ ui.registerOnlineExtra(
             elseif phase == "yellow" then
                 startSequence()
             else
-                -- Ya en secuencia: cancelar y volver a apagado
+                -- Ya en secuencia: cancelar y volver a apagado.
+                -- Se vacía la cola de reenvíos pendientes (si no, los reenvíos programados de
+                -- la secuencia seguían saliendo hasta 7 s después y la revivían), y se
+                -- reenvía la cancelación varias veces por si algún cliente la pierde.
+                cancelledStartTime = startTime
+                resendQueue = {}
                 phase = "off"
                 restrictorActive = false
                 restrictorTimer = 0
-                rollingStartEvent({ phase = 0, startTime = 0, delayTime = 0 })
+                local cancelPayload = { phase = 0, startTime = 0, delayTime = 0 }
+                rollingStartEvent(cancelPayload)
+                scheduleResend(cancelPayload, 0.3)
+                scheduleResend(cancelPayload, 1)
+                scheduleResend(cancelPayload, 2.5)
             end
             ac.log("[ROLLINGSTART] Click admin -> fase: " .. phase)
         end,
